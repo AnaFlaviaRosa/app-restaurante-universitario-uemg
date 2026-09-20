@@ -2,7 +2,7 @@
 
 Base de código Flutter + Firebase (Auth + Firestore) para o app de
 gerenciamento do Restaurante Universitário, seguindo a modelagem e as
-regras de negócio definidas pelo grupo (Ana, Luan, Noemi).
+regras de negócio definidas pelo grupo (Ana, Luan, Noemi, Bruna).
 
 ## O que já está implementado
 
