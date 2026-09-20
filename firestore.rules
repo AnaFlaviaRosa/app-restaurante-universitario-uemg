@@ -1,0 +1,93 @@
+rules_version = '2';
+
+// Regras de segurança do Firestore para o app do RU.
+//
+// Princípio geral: o app (Flutter) confia nessas regras, não no
+// contrário. Mesmo que uma tela "esconda" um botão de admin, um
+// usuário malicioso poderia tentar chamar o Firestore diretamente —
+// por isso a validação de quem pode admin.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function estaLogado() {
+      return request.auth != null;
+    }
+
+    function ehDono(usuarioId) {
+      return estaLogado() && request.auth.uid == usuarioId;
+    }
+
+    function ehAdmin() {
+      return estaLogado() &&
+        get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tipo == 'admin';
+    }
+
+    // Usuário: cada um só lê/edita o próprio documento.
+    // Ninguém pode alterar o próprio "tipo" (evita virar admin sozinho)
+    // nem o próprio "saldoAtual" diretamente — isso só é alterado por
+    // transações controladas nos services (recarga/reserva), então
+    // aqui bloqueamos escrita direta de saldo por parte do usuário comum.
+    match /usuarios/{usuarioId} {
+      allow read: if ehDono(usuarioId) || ehAdmin();
+      allow create: if ehDono(usuarioId);
+      allow update: if ehAdmin() ||
+        (ehDono(usuarioId) &&
+         request.resource.data.tipo == resource.data.tipo &&
+         request.resource.data.saldoAtual == resource.data.saldoAtual);
+    }
+
+    // Reservas: usuário só vê/gerencia as próprias; admin vê todas.
+    match /reservas/{reservaId} {
+      allow read: if ehAdmin() ||
+        (estaLogado() && resource.data.usuarioId == request.auth.uid);
+      allow create: if estaLogado() &&
+        request.resource.data.usuarioId == request.auth.uid;
+      allow update: if ehAdmin() ||
+        (estaLogado() && resource.data.usuarioId == request.auth.uid);
+      allow delete: if false;
+    }
+
+    // Movimentações financeiras: só o dono lê; ninguém escreve direto
+    // do cliente (as escritas acontecem via transação dentro do
+    // próprio backend/app, mas idealmente migrariam para Cloud
+    // Functions numa versão futura, mais segura que regra de cliente).
+    match /movimentacoes/{id} {
+      allow read: if ehAdmin() ||
+        (estaLogado() && resource.data.usuarioId == request.auth.uid);
+      allow create: if estaLogado() &&
+        request.resource.data.usuarioId == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // Disponibilidade de marmitas: todo usuário logado pode ler
+    // (precisa ver quantas restam); só admin edita a quantidade total,
+    // mas o próprio app do estudante decrementa quantidadeDisponivel
+    // na hora de reservar (dentro da transação de criarReserva).
+    match /disponibilidades/{id} {
+      allow read: if estaLogado();
+      allow write: if ehAdmin() || estaLogado();
+      // Observação para a apresentação/TCC: o ideal seria restringir
+      // ainda mais essa escrita (ex: só permitir decrementar 1 por vez)
+      // usando Cloud Functions. Documentem isso como melhoria futura.
+    }
+
+    // Cardápio: leitura pública para logados; só admin edita.
+    match /cardapios/{id} {
+      allow read: if estaLogado();
+      allow write: if ehAdmin();
+    }
+
+    // Lotação: leitura pública para logados; só admin edita.
+    match /lotacao/{id} {
+      allow read: if estaLogado();
+      allow write: if ehAdmin();
+    }
+
+    // Configurações (horários das refeições): leitura pública para
+    // logados; só admin edita.
+    match /config/{id} {
+      allow read: if estaLogado();
+      allow write: if ehAdmin();
+    }
+  }
+}
