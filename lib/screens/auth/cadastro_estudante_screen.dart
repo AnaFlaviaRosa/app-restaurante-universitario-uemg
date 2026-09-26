@@ -1,17 +1,26 @@
 import 'package:flutter/material.dart';
 import '../../services/auth_service.dart';
+import '../../services/matricula_service.dart';
 
-class CadastroScreen extends StatefulWidget {
-  const CadastroScreen({super.key});
+/// Cadastro de ESTUDANTE.
+///
+/// Pede CPF (é a chave primária do usuário no banco — ver Usuario.id)
+/// e também a matrícula, que serve só para confirmar o vínculo com a
+/// UEMG e, por causa disso, o valor da refeição sai mais barato
+/// (R$ 4,00, contra R$ 17,00 do usuário comum).
+class CadastroEstudanteScreen extends StatefulWidget {
+  const CadastroEstudanteScreen({super.key});
 
   @override
-  State<CadastroScreen> createState() => _CadastroScreenState();
+  State<CadastroEstudanteScreen> createState() =>
+      _CadastroEstudanteScreenState();
 }
 
-class _CadastroScreenState extends State<CadastroScreen> {
+class _CadastroEstudanteScreenState extends State<CadastroEstudanteScreen> {
   final _formKey = GlobalKey<FormState>();
   final _nomeController = TextEditingController();
   final _cpfController = TextEditingController();
+  final _matriculaController = TextEditingController();
   final _emailController = TextEditingController();
   final _senhaController = TextEditingController();
   final _authService = AuthService();
@@ -26,16 +35,27 @@ class _CadastroScreenState extends State<CadastroScreen> {
       _erro = null;
     });
     try {
-      await _authService.cadastrar(
+      await _authService.cadastrarEstudante(
         nome: _nomeController.text.trim(),
         cpf: _cpfController.text.trim(),
+        matricula: _matriculaController.text.trim(),
         email: _emailController.text.trim(),
         senha: _senhaController.text,
       );
-      if (mounted) Navigator.pop(context);
+      if (mounted) {
+        // Volta para o login (fecha as duas telas de cadastro).
+        Navigator.popUntil(context, (route) => route.isFirst);
+      }
+    } on MatriculaInvalidaException catch (e) {
+      setState(() => _erro = e.message);
+    } on MatriculaJaUsadaException catch (e) {
+      setState(() => _erro = e.message);
     } catch (e) {
-      setState(() => _erro = 'Não foi possível cadastrar. Verifique os dados '
-          '(o e-mail pode já estar em uso).');
+      final mensagem = e.toString().contains('CpfJaCadastradoException')
+          ? 'Já existe uma conta cadastrada com este CPF.'
+          : 'Não foi possível cadastrar. Verifique os dados (o e-mail pode '
+              'já estar em uso).';
+      setState(() => _erro = mensagem);
     } finally {
       if (mounted) setState(() => _carregando = false);
     }
@@ -44,7 +64,7 @@ class _CadastroScreenState extends State<CadastroScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Criar conta')),
+      appBar: AppBar(title: const Text('Cadastro — Estudante')),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
@@ -67,11 +87,25 @@ class _CadastroScreenState extends State<CadastroScreen> {
                   controller: _cpfController,
                   keyboardType: TextInputType.number,
                   decoration: const InputDecoration(
-                    labelText: 'CPF',
+                    labelText: 'CPF (só números)',
                     border: OutlineInputBorder(),
+                    helperText: 'É o identificador da sua conta no sistema.',
                   ),
                   validator: (v) => (v == null || v.trim().length < 11)
                       ? 'CPF inválido'
+                      : null,
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: _matriculaController,
+                  decoration: const InputDecoration(
+                    labelText: 'Matrícula',
+                    border: OutlineInputBorder(),
+                    helperText:
+                        'Precisa estar liberada pela administração do RU.',
+                  ),
+                  validator: (v) => (v == null || v.trim().isEmpty)
+                      ? 'Informe a matrícula'
                       : null,
                 ),
                 const SizedBox(height: 16),

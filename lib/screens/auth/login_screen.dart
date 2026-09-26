@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../services/auth_service.dart';
-import 'cadastro_screen.dart';
+import 'escolha_tipo_cadastro_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -102,7 +102,8 @@ class _LoginScreenState extends State<LoginScreen> {
                     onPressed: () {
                       Navigator.push(
                         context,
-                        MaterialPageRoute(builder: (_) => const CadastroScreen()),
+                        MaterialPageRoute(
+                            builder: (_) => const EscolhaTipoCadastroScreen()),
                       );
                     },
                     child: const Text('Ainda não tenho conta — Cadastrar'),

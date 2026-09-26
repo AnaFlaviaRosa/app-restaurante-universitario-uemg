@@ -57,7 +57,7 @@ class PortaoDeEntrada extends StatelessWidget {
         }
 
         return FutureBuilder<Usuario>(
-          future: authService.buscarUsuario(snapshot.data!.uid),
+          future: authService.buscarUsuarioPorUid(snapshot.data!.uid),
           builder: (context, usuarioSnap) {
             if (usuarioSnap.connectionState == ConnectionState.waiting) {
               return const Scaffold(

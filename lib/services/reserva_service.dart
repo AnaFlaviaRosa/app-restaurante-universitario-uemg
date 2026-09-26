@@ -2,10 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/reserva.dart';
 import '../models/disponibilidade.dart';
 import 'config_service.dart';
-
-/// Valor cobrado por marmita. Em uma evolução futura isso poderia vir
-/// de uma configuração editável pelo administrador (igual os horários).
-const double kValorMarmita = 5.0;
+import 'preco_service.dart';
 
 class SaldoInsuficienteException implements Exception {
   final String message = 'Saldo insuficiente para reservar a marmita.';
@@ -24,9 +21,15 @@ class ForaDoPrazoException implements Exception {
   ForaDoPrazoException(this.message);
 }
 
+/// IMPORTANTE: `usuarioId` em todo este arquivo é, na prática, o CPF
+/// do usuário (chave primária de `usuarios` — ver Usuario.id em
+/// usuario.dart). O nome do parâmetro foi mantido como `usuarioId`
+/// para não quebrar as telas que já chamam este serviço passando
+/// `widget.usuario.id`.
 class ReservaService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
   final ConfigService _configService = ConfigService();
+  final PrecoService _precoService = PrecoService();
 
   String _chave(DateTime data, TipoRefeicao tipo) {
     return '${data.year.toString().padLeft(4, '0')}-'
@@ -52,6 +55,16 @@ class ReservaService {
         (doc) => doc.exists ? Disponibilidade.fromMap(doc.id, doc.data()!) : null);
   }
 
+  /// Valor que o usuário pagaria pela refeição agora, considerando seu
+  /// tipo (estudante paga R$ 4, comum paga R$ 17 — ver PrecoService).
+  /// Usado na tela de reserva para mostrar o preço antes de confirmar.
+  Future<double> valorParaTipo(String tipoUsuarioString) async {
+    final precos = await _precoService.buscarPrecos();
+    return tipoUsuarioString == 'comum'
+        ? precos[TipoUsuarioPreco.comum]!
+        : precos[TipoUsuarioPreco.estudante]!;
+  }
+
   /// Cria a reserva.
   ///
   /// Tudo roda em UMA transação do Firestore para garantir que, mesmo
@@ -60,11 +73,15 @@ class ReservaService {
   ///
   /// Regras aplicadas (definidas pelo grupo):
   /// 1. Usuário só pode ter 1 reserva confirmada por tipo de refeição/dia.
-  /// 2. Precisa ter saldo suficiente (marmita é paga no ato da reserva).
+  /// 2. Precisa ter saldo suficiente. O valor cobrado depende do TIPO do
+  ///    usuário (estudante = R$ 4, comum = R$ 17), lido de dentro da
+  ///    própria transação a partir de usuarios/{cpf}.tipo — garante que
+  ///    ninguém pague o preço errado mesmo que o app tenha um dado
+  ///    desatualizado em tela.
   /// 3. Precisa haver marmita disponível.
   /// 4. Só pode reservar até o horário de abertura da refeição.
   Future<void> criarReserva({
-    required String usuarioId,
+    required String usuarioId, // = CPF
     required DateTime data,
     required TipoRefeicao tipoRefeicao,
   }) async {
@@ -77,6 +94,8 @@ class ReservaService {
       throw ForaDoPrazoException(
           'O horário de reserva para esta refeição já encerrou.');
     }
+
+    final precos = await _precoService.buscarPrecos();
 
     final dispId = _chave(data, tipoRefeicao);
     final dispRef = _db.collection('disponibilidades').doc(dispId);
@@ -111,23 +130,28 @@ class ReservaService {
 
       final usuarioSnap = await transacao.get(usuarioRef);
       final saldoAtual = (usuarioSnap.data()?['saldoAtual'] ?? 0).toDouble();
-      if (saldoAtual < kValorMarmita) {
+      final tipoUsuario = usuarioSnap.data()?['tipo'] ?? 'estudante';
+      final valorRefeicao = tipoUsuario == 'comum'
+          ? precos[TipoUsuarioPreco.comum]!
+          : precos[TipoUsuarioPreco.estudante]!;
+
+      if (saldoAtual < valorRefeicao) {
         throw SaldoInsuficienteException();
       }
 
-      // 1. Debita o saldo
-      transacao.update(usuarioRef, {'saldoAtual': saldoAtual - kValorMarmita});
+      // 1. Debita o saldo (valor conforme o tipo do usuário)
+      transacao.update(usuarioRef, {'saldoAtual': saldoAtual - valorRefeicao});
 
       // 2. Reduz a disponibilidade
       transacao.update(dispRef, {'quantidadeDisponivel': disponivel - 1});
 
-      // 3. Cria a reserva
+      // 3. Cria a reserva (guarda o valor efetivamente cobrado)
       transacao.set(reservaRef, Reserva(
         id: reservaRef.id,
         usuarioId: usuarioId,
         data: inicioDia,
         tipoRefeicao: tipoRefeicao,
-        valor: kValorMarmita,
+        valor: valorRefeicao,
         status: StatusReserva.confirmada,
         criadaEm: DateTime.now(),
       ).toMap());
@@ -136,7 +160,7 @@ class ReservaService {
       transacao.set(movimentacaoRef, {
         'usuarioId': usuarioId,
         'tipo': 'consumo',
-        'valor': kValorMarmita,
+        'valor': valorRefeicao,
         'status': 'aprovada',
         'data': DateTime.now(),
         'reservaId': reservaRef.id,
@@ -147,10 +171,9 @@ class ReservaService {
   /// Cancela a reserva e devolve a marmita para a disponibilidade.
   ///
   /// Regra: só pode cancelar até 1 hora antes da abertura da refeição.
-  /// Se não buscar e não cancelar dentro do prazo, o valor NÃO é
-  /// devolvido (regra definida pelo grupo) — quem não cancela a tempo
-  /// e não retira deve depois ser marcado como `naoRetirada` pelo
-  /// administrador (ver AdminService), sem estorno.
+  /// O estorno usa `reserva.valor` (o que foi cobrado de fato), não o
+  /// preço atual da tabela — evita inconsistência se o preço mudar
+  /// entre a reserva e o cancelamento.
   Future<void> cancelarReserva(Reserva reserva) async {
     final horarios = await _configService.buscarHorarios();
     final horario = horarios[tipoRefeicaoToString(reserva.tipoRefeicao)]!;
@@ -177,7 +200,6 @@ class ReservaService {
       transacao.update(reservaRef, {'status': 'cancelada'});
       transacao.update(dispRef, {'quantidadeDisponivel': disponivel + 1});
 
-      // Cancelamento dentro do prazo: devolve o valor ao saldo (estorno).
       final usuarioSnap = await transacao.get(usuarioRef);
       final saldoAtual = (usuarioSnap.data()?['saldoAtual'] ?? 0).toDouble();
       transacao.update(usuarioRef, {'saldoAtual': saldoAtual + reserva.valor});

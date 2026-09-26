@@ -2,10 +2,18 @@ rules_version = '2';
 
 // Regras de segurança do Firestore para o app do RU.
 //
-// Princípio geral: o app (Flutter) confia nessas regras, não no
-// contrário. Mesmo que uma tela "esconda" um botão de admin, um
-// usuário malicioso poderia tentar chamar o Firestore diretamente —
-// por isso a validação de quem pode admin.
+// MUDANÇA IMPORTANTE em relação à versão anterior: a chave primária
+// do usuário agora é o CPF (`usuarios/{cpf}`), não mais o uid do
+// Firebase Auth. Como as regras só têm acesso a `request.auth.uid`
+// (nunca ao CPF diretamente), usamos a coleção de índice
+// `uid_cpf/{uid} = { cpf }` (criada no cadastro) para "traduzir" o uid
+// autenticado no CPF correspondente, sempre que precisamos comparar
+// "este documento pertence a quem está logado?".
+//
+// Cuidado técnico usado aqui: toda função que chama get()/.data usa
+// exists() ANTES, combinado com && (que faz curto-circuito). Isso
+// evita erro de "documento não encontrado" quando o índice ou o
+// usuário ainda não existem (ex: durante o próprio cadastro).
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -13,59 +21,96 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function ehDono(usuarioId) {
-      return estaLogado() && request.auth.uid == usuarioId;
-    }
-
-    function ehAdmin() {
+    function existeIndiceUid() {
       return estaLogado() &&
-        get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tipo == 'admin';
+        exists(/databases/$(database)/documents/uid_cpf/$(request.auth.uid));
     }
 
-    // Usuário: cada um só lê/edita o próprio documento.
-    // Ninguém pode alterar o próprio "tipo" (evita virar admin sozinho)
-    // nem o próprio "saldoAtual" diretamente — isso só é alterado por
-    // transações controladas nos services (recarga/reserva), então
-    // aqui bloqueamos escrita direta de saldo por parte do usuário comum.
-    match /usuarios/{usuarioId} {
-      allow read: if ehDono(usuarioId) || ehAdmin();
-      allow create: if ehDono(usuarioId);
-      allow update: if ehAdmin() ||
-        (ehDono(usuarioId) &&
+    function meuCpf() {
+      return get(/databases/$(database)/documents/uid_cpf/$(request.auth.uid)).data.cpf;
+    }
+
+    function souDono(cpf) {
+      return existeIndiceUid() && meuCpf() == cpf;
+    }
+
+    function souAdmin() {
+      return existeIndiceUid() &&
+        exists(/databases/$(database)/documents/usuarios/$(meuCpf())) &&
+        get(/databases/$(database)/documents/usuarios/$(meuCpf())).data.tipo == 'admin';
+    }
+
+    // Índice uid -> cpf. Cada usuário só cria/lê o próprio índice.
+    // Nunca é atualizado nem apagado pelo cliente (evita alguém trocar
+    // o CPF associado ao próprio uid depois de criado).
+    match /uid_cpf/{uid} {
+      allow read: if estaLogado() && request.auth.uid == uid;
+      allow create: if estaLogado() && request.auth.uid == uid;
+      allow update, delete: if false;
+    }
+
+    // Usuário: cada um só lê/edita o próprio documento (agora indexado
+    // pelo CPF). Ninguém pode alterar o próprio "tipo" (evita virar
+    // admin sozinho) nem o próprio "saldoAtual" diretamente — isso só
+    // é alterado por transações controladas nos services
+    // (recarga/reserva).
+    match /usuarios/{cpf} {
+      allow read: if souDono(cpf) || souAdmin();
+      // Na criação ainda não existe uid_cpf/{uid}, então validamos
+      // diretamente que o uid gravado no documento é o de quem está
+      // autenticado (em vez de usar souDono, que dependeria do índice).
+      allow create: if estaLogado() && request.resource.data.uid == request.auth.uid;
+      allow update: if souAdmin() ||
+        (souDono(cpf) &&
          request.resource.data.tipo == resource.data.tipo &&
          request.resource.data.saldoAtual == resource.data.saldoAtual);
     }
 
-    // Reservas: usuário só vê/gerencia as próprias; admin vê todas.
+    // Reservas: usuarioId agora é o CPF. Usuário só vê/gerencia as
+    // próprias; admin vê todas.
     match /reservas/{reservaId} {
-      allow read: if ehAdmin() ||
-        (estaLogado() && resource.data.usuarioId == request.auth.uid);
+      allow read: if souAdmin() ||
+        (estaLogado() && resource.data.usuarioId == meuCpf());
       allow create: if estaLogado() &&
-        request.resource.data.usuarioId == request.auth.uid;
-      allow update: if ehAdmin() ||
-        (estaLogado() && resource.data.usuarioId == request.auth.uid);
+        request.resource.data.usuarioId == meuCpf();
+      allow update: if souAdmin() ||
+        (estaLogado() && resource.data.usuarioId == meuCpf());
       allow delete: if false;
     }
 
-    // Movimentações financeiras: só o dono lê; ninguém escreve direto
-    // do cliente (as escritas acontecem via transação dentro do
-    // próprio backend/app, mas idealmente migrariam para Cloud
-    // Functions numa versão futura, mais segura que regra de cliente).
+    // Movimentações financeiras: usuarioId agora é o CPF. Só o dono lê;
+    // ninguém escreve direto do cliente fora do fluxo dos services
+    // (idealmente migraria para Cloud Functions numa versão futura).
     match /movimentacoes/{id} {
-      allow read: if ehAdmin() ||
-        (estaLogado() && resource.data.usuarioId == request.auth.uid);
+      allow read: if souAdmin() ||
+        (estaLogado() && resource.data.usuarioId == meuCpf());
       allow create: if estaLogado() &&
-        request.resource.data.usuarioId == request.auth.uid;
+        request.resource.data.usuarioId == meuCpf();
       allow update, delete: if false;
     }
 
+    // Matrículas válidas (nova coleção): o admin cadastra/apaga; leitura
+    // liberada para logados. A "marcação de usada" precisa poder
+    // acontecer no meio do cadastro do estudante — quando o índice
+    // uid_cpf ainda NÃO existe — por isso o self-service abaixo não
+    // depende de souAdmin()/souDono(), só confere a transição de
+    // usada:false -> usada:true.
+    match /matriculas_validas/{matricula} {
+      allow read: if estaLogado();
+      allow create, delete: if souAdmin();
+      allow update: if souAdmin() ||
+        (estaLogado() &&
+         resource.data.usada == false &&
+         request.resource.data.usada == true);
+    }
+
     // Disponibilidade de marmitas: todo usuário logado pode ler
-    // (precisa ver quantas restam); só admin edita a quantidade total,
-    // mas o próprio app do estudante decrementa quantidadeDisponivel
-    // na hora de reservar (dentro da transação de criarReserva).
+    // (precisa ver quantas restam); admin define a quantidade total,
+    // e o próprio app do estudante decrementa quantidadeDisponivel na
+    // hora de reservar (dentro da transação de criarReserva).
     match /disponibilidades/{id} {
       allow read: if estaLogado();
-      allow write: if ehAdmin() || estaLogado();
+      allow write: if souAdmin() || estaLogado();
       // Observação para a apresentação/TCC: o ideal seria restringir
       // ainda mais essa escrita (ex: só permitir decrementar 1 por vez)
       // usando Cloud Functions. Documentem isso como melhoria futura.
@@ -74,20 +119,20 @@ service cloud.firestore {
     // Cardápio: leitura pública para logados; só admin edita.
     match /cardapios/{id} {
       allow read: if estaLogado();
-      allow write: if ehAdmin();
+      allow write: if souAdmin();
     }
 
     // Lotação: leitura pública para logados; só admin edita.
     match /lotacao/{id} {
       allow read: if estaLogado();
-      allow write: if ehAdmin();
+      allow write: if souAdmin();
     }
 
-    // Configurações (horários das refeições): leitura pública para
-    // logados; só admin edita.
+    // Configurações (horários das refeições, preços por tipo de
+    // usuário): leitura pública para logados; só admin edita.
     match /config/{id} {
       allow read: if estaLogado();
-      allow write: if ehAdmin();
+      allow write: if souAdmin();
     }
   }
 }

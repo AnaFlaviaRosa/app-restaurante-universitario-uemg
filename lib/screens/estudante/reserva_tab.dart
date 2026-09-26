@@ -111,7 +111,18 @@ class _ReservaTabState extends State<ReservaTab> {
                       style: const TextStyle(fontWeight: FontWeight.bold),
                     ),
                     const SizedBox(height: 4),
-                    Text('Valor: R\$ ${kValorMarmita.toStringAsFixed(2)}'),
+                    FutureBuilder<double>(
+                      future: _reservaService
+                          .valorParaTipo(tipoUsuarioToString(widget.usuario.tipo)),
+                      builder: (context, valorSnap) {
+                        if (!valorSnap.hasData) {
+                          return const Text('Valor: carregando...');
+                        }
+                        return Text(
+                            'Valor (${widget.usuario.isEstudante ? 'estudante' : 'comum'}): '
+                            'R\$ ${valorSnap.data!.toStringAsFixed(2)}');
+                      },
+                    ),
                     const SizedBox(height: 12),
                     ElevatedButton(
                       onPressed:
