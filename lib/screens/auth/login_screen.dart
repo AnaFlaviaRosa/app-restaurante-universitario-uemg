@@ -38,6 +38,58 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  Future<void> _abrirDialogoRedefinirSenha() async {
+    final controller = TextEditingController(text: _emailController.text);
+    final email = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Redefinir senha'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Informe o e-mail da sua conta. Se ele estiver '
+                  'cadastrado, enviaremos um link para você criar uma '
+                  'nova senha.',
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              keyboardType: TextInputType.emailAddress,
+              decoration: const InputDecoration(
+                labelText: 'E-mail',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('Enviar'),
+          ),
+        ],
+      ),
+    );
+
+    if (email == null || email.isEmpty || !mounted) return;
+
+    await _authService.enviarRedefinicaoSenha(email);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+      content: Text(
+        'Se esse e-mail estiver cadastrado, você vai receber um '
+            'link para redefinir a senha em instantes.',
+      ),
+      duration: Duration(seconds: 5),
+    ));
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -67,7 +119,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       border: OutlineInputBorder(),
                     ),
                     validator: (v) =>
-                        (v == null || !v.contains('@')) ? 'E-mail inválido' : null,
+                    (v == null || !v.contains('@')) ? 'E-mail inválido' : null,
                   ),
                   const SizedBox(height: 16),
                   TextFormField(
@@ -91,13 +143,17 @@ class _LoginScreenState extends State<LoginScreen> {
                     style: ElevatedButton.styleFrom(padding: const EdgeInsets.all(16)),
                     child: _carregando
                         ? const SizedBox(
-                            height: 20,
-                            width: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
+                      height: 20,
+                      width: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
                         : const Text('Entrar'),
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 4),
+                  TextButton(
+                    onPressed: _abrirDialogoRedefinirSenha,
+                    child: const Text('Esqueci minha senha'),
+                  ),
                   TextButton(
                     onPressed: () {
                       Navigator.push(

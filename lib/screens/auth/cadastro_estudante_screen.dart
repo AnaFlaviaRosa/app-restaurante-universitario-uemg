@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import '../../services/auth_service.dart';
 import '../../services/matricula_service.dart';
+import '../../utils/validadores.dart';
 
 /// Cadastro de ESTUDANTE.
 ///
-/// Pede CPF (é a chave primária do usuário no banco — ver Usuario.id)
+/// Pede CPF (guardado como campo do usuário — ver Usuario.cpf; a
+/// chave primária do documento é o uid do Firebase Auth)q
 /// e também a matrícula, que serve só para confirmar o vínculo com a
 /// UEMG e, por causa disso, o valor da refeição sai mais barato
 /// (R$ 4,00, contra R$ 17,00 do usuário comum).
@@ -37,7 +39,7 @@ class _CadastroEstudanteScreenState extends State<CadastroEstudanteScreen> {
     try {
       await _authService.cadastrarEstudante(
         nome: _nomeController.text.trim(),
-        cpf: _cpfController.text.trim(),
+        cpf: limparCpf(_cpfController.text),
         matricula: _matriculaController.text.trim(),
         email: _emailController.text.trim(),
         senha: _senhaController.text,
@@ -91,9 +93,11 @@ class _CadastroEstudanteScreenState extends State<CadastroEstudanteScreen> {
                     border: OutlineInputBorder(),
                     helperText: 'É o identificador da sua conta no sistema.',
                   ),
-                  validator: (v) => (v == null || v.trim().length < 11)
-                      ? 'CPF inválido'
-                      : null,
+                  validator: (v) {
+                    if (v == null || v.trim().isEmpty) return 'Informe o CPF';
+                    if (!validarCpf(v)) return 'CPF inválido';
+                    return null;
+                  },
                 ),
                 const SizedBox(height: 16),
                 TextFormField(

@@ -10,12 +10,17 @@ class CpfJaCadastradoException implements Exception {
 /// Responsável por cadastro/login/logout (Firebase Authentication) e
 /// por criar/ler o documento correspondente em `usuarios` (Firestore).
 ///
-/// MUDANÇA IMPORTANTE: o documento em `usuarios` agora é indexado pelo
-/// CPF (chave primária), não pelo uid do Firebase Auth. Como o Auth só
-/// devolve o uid no login, mantemos uma coleção auxiliar
-/// `uid_cpf/{uid} = { cpf }` para conseguir achar o usuário certo
-/// depois do login. Essa "tradução" uid -> cpf acontece dentro de
-/// `buscarUsuarioPorUid`.
+/// MUDANÇA (revisão de segurança/LGPD): o documento em `usuarios`
+/// volta a ser indexado pelo `uid` do Firebase Auth (chave primária),
+/// e não mais pelo CPF. O CPF é guardado só como CAMPO dentro do
+/// documento do próprio usuário — deixa de aparecer no ID do
+/// documento, em regras de segurança e em qualquer log que imprima o
+/// path do documento.
+///
+/// Unicidade de CPF (impedir duas contas com o mesmo CPF) é garantida
+/// por uma coleção só de checagem, `cpfs_em_uso/{cpf} = { uid }`, que
+/// NÃO guarda nenhum outro dado do usuário — serve só pra essa
+/// verificação no cadastro.
 class AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _db = FirebaseFirestore.instance;
@@ -25,26 +30,25 @@ class AuthService {
   User? get usuarioAtualAuth => _auth.currentUser;
 
   Future<bool> _cpfJaExiste(String cpf) async {
-    final doc = await _db.collection('usuarios').doc(cpf).get();
+    final doc = await _db.collection('cpfs_em_uso').doc(cpf).get();
     return doc.exists;
   }
 
-  Future<void> _salvarIndiceUidCpf(String uid, String cpf) {
-    return _db.collection('uid_cpf').doc(uid).set({'cpf': cpf});
+  Future<void> _reservarCpf(String cpf, String uid) {
+    return _db.collection('cpfs_em_uso').doc(cpf).set({'uid': uid});
   }
 
-  /// Cadastro de ESTUDANTE: exige CPF (chave primária) + matrícula
-  /// válida (ver MatriculaService). A matrícula só CONFIRMA que a
-  /// pessoa é estudante — quem identifica o usuário no banco é o CPF.
+  /// Cadastro de ESTUDANTE: exige CPF (só para checagem de unicidade
+  /// e cadastro no documento) + matrícula válida (ver MatriculaService).
   ///
   /// Ordem das operações (importante para não deixar dado "pela
   /// metade" se algo falhar no meio do caminho):
-  /// 1. Cria a conta no Firebase Auth (email/senha).
+  /// 1. Cria a conta no Firebase Auth (email/senha) -> gera o uid.
   /// 2. Confere se o CPF já está cadastrado -> se sim, desfaz a conta
   ///    criada no passo 1 e lança CpfJaCadastradoException.
   /// 3. Valida e marca a matrícula como usada -> se for inválida ou já
   ///    usada, desfaz a conta do passo 1 e relança o erro.
-  /// 4. Cria o documento usuarios/{cpf} e o índice uid_cpf/{uid}.
+  /// 4. Cria o documento usuarios/{uid} e reserva o CPF em cpfs_em_uso.
   Future<Usuario> cadastrarEstudante({
     required String nome,
     required String cpf,
@@ -71,8 +75,8 @@ class AuthService {
     }
 
     final usuario = Usuario(
-      id: cpf,
-      uid: uid,
+      id: uid,
+      cpf: cpf,
       nome: nome,
       email: email,
       tipo: TipoUsuario.estudante,
@@ -82,8 +86,8 @@ class AuthService {
     );
 
     try {
-      await _db.collection('usuarios').doc(cpf).set(usuario.toMap());
-      await _salvarIndiceUidCpf(uid, cpf);
+      await _db.collection('usuarios').doc(uid).set(usuario.toMap());
+      await _reservarCpf(cpf, uid);
     } catch (e) {
       // Se falhar ao salvar no Firestore, devolve a matrícula e a
       // conta de autenticação criada, para não deixar lixo no banco.
@@ -95,8 +99,9 @@ class AuthService {
     return usuario;
   }
 
-  /// Cadastro de usuário COMUM: exige CPF (chave primária). Sem
-  /// matrícula, sem validação externa no MVP.
+  /// Cadastro de usuário COMUM: exige CPF (só para checagem de
+  /// unicidade e cadastro no documento). Sem matrícula, sem validação
+  /// externa no MVP.
   Future<Usuario> cadastrarComum({
     required String nome,
     required String cpf,
@@ -115,8 +120,8 @@ class AuthService {
     }
 
     final usuario = Usuario(
-      id: cpf,
-      uid: uid,
+      id: uid,
+      cpf: cpf,
       nome: nome,
       email: email,
       tipo: TipoUsuario.comum,
@@ -125,8 +130,8 @@ class AuthService {
     );
 
     try {
-      await _db.collection('usuarios').doc(cpf).set(usuario.toMap());
-      await _salvarIndiceUidCpf(uid, cpf);
+      await _db.collection('usuarios').doc(uid).set(usuario.toMap());
+      await _reservarCpf(cpf, uid);
     } catch (e) {
       await credencial.user!.delete();
       rethrow;
@@ -146,20 +151,10 @@ class AuthService {
     return buscarUsuarioPorUid(credencial.user!.uid);
   }
 
-  /// Traduz uid (Firebase Auth) -> cpf (chave primária) -> Usuario.
-  /// Use este método (e não mais `buscarUsuario`) sempre que só se
-  /// tiver o uid em mãos, como no PortaoDeEntrada em main.dart.
+  /// Busca o documento usuarios/{uid} diretamente — não precisa mais
+  /// de nenhuma "tradução" (o uid do Auth já É o id do documento).
   Future<Usuario> buscarUsuarioPorUid(String uid) async {
-    final indice = await _db.collection('uid_cpf').doc(uid).get();
-    if (!indice.exists) {
-      throw Exception('Usuário não encontrado (índice uid->cpf ausente).');
-    }
-    final cpf = indice.data()!['cpf'] as String;
-    return buscarUsuarioPorCpf(cpf);
-  }
-
-  Future<Usuario> buscarUsuarioPorCpf(String cpf) async {
-    final doc = await _db.collection('usuarios').doc(cpf).get();
+    final doc = await _db.collection('usuarios').doc(uid).get();
     if (!doc.exists) {
       throw Exception('Usuário não encontrado no banco de dados.');
     }
@@ -167,4 +162,23 @@ class AuthService {
   }
 
   Future<void> logout() => _auth.signOut();
+
+  /// Envia e-mail de redefinição de senha.
+  ///
+  /// Propositalmente NÃO diferencia "e-mail existe" de "e-mail não
+  /// existe" pra quem chama — sempre parece ter dado certo do ponto
+  /// de vista de quem usa. Isso evita que a tela vire uma forma de
+  /// descobrir quais e-mails estão cadastrados no sistema
+  /// (enumeração de usuários).
+  Future<void> enviarRedefinicaoSenha(String email) async {
+    try {
+      await _auth.sendPasswordResetEmail(email: email);
+    } on FirebaseAuthException catch (e) {
+      // 'user-not-found' e 'invalid-email' não devem vazar pra quem
+      // usa o app; qualquer outro erro (ex: rede) relança normalmente.
+      if (e.code != 'user-not-found' && e.code != 'invalid-email') {
+        rethrow;
+      }
+    }
+  }
 }

@@ -45,14 +45,14 @@ class ReservaService {
         .orderBy('data', descending: true)
         .snapshots()
         .map((snap) =>
-            snap.docs.map((d) => Reserva.fromMap(d.id, d.data())).toList());
+        snap.docs.map((d) => Reserva.fromMap(d.id, d.data())).toList());
   }
 
   Stream<Disponibilidade?> disponibilidadeStream(
       DateTime data, TipoRefeicao tipo) {
     final id = _chave(data, tipo);
     return _db.collection('disponibilidades').doc(id).snapshots().map(
-        (doc) => doc.exists ? Disponibilidade.fromMap(doc.id, doc.data()!) : null);
+            (doc) => doc.exists ? Disponibilidade.fromMap(doc.id, doc.data()!) : null);
   }
 
   /// Valor que o usuário pagaria pela refeição agora, considerando seu
@@ -65,6 +65,11 @@ class ReservaService {
         : precos[TipoUsuarioPreco.estudante]!;
   }
 
+  String _chaveReservaAtiva(
+      String usuarioId, DateTime data, TipoRefeicao tipo) {
+    return '${usuarioId}_${_chave(data, tipo)}';
+  }
+
   /// Cria a reserva.
   ///
   /// Tudo roda em UMA transação do Firestore para garantir que, mesmo
@@ -73,6 +78,11 @@ class ReservaService {
   ///
   /// Regras aplicadas (definidas pelo grupo):
   /// 1. Usuário só pode ter 1 reserva confirmada por tipo de refeição/dia.
+  ///    Isso é garantido por um documento "marcador" com ID
+  ///    determinístico (`reservas_ativas/{cpf}_{data}_{tipo}`), lido
+  ///    e criado DENTRO da mesma transação — o Firestore não permite
+  ///    rodar uma query (`where`) dentro de uma transação, então essa
+  ///    é a forma de conseguir uma checagem atômica de "já existe?".
   /// 2. Precisa ter saldo suficiente. O valor cobrado depende do TIPO do
   ///    usuário (estudante = R$ 4, comum = R$ 17), lido de dentro da
   ///    própria transação a partir de usuarios/{cpf}.tipo — garante que
@@ -97,29 +107,25 @@ class ReservaService {
 
     final precos = await _precoService.buscarPrecos();
 
+    final inicioDia = DateTime(data.year, data.month, data.day);
     final dispId = _chave(data, tipoRefeicao);
     final dispRef = _db.collection('disponibilidades').doc(dispId);
     final usuarioRef = _db.collection('usuarios').doc(usuarioId);
     final reservaRef = _db.collection('reservas').doc();
     final movimentacaoRef = _db.collection('movimentacoes').doc();
-
-    // Verifica se já existe reserva confirmada para o mesmo dia/refeição.
-    final inicioDia = DateTime(data.year, data.month, data.day);
-    final fimDia = inicioDia.add(const Duration(days: 1));
-    final existentes = await _db
-        .collection('reservas')
-        .where('usuarioId', isEqualTo: usuarioId)
-        .where('tipoRefeicao', isEqualTo: tipoRefeicaoToString(tipoRefeicao))
-        .where('status', isEqualTo: 'confirmada')
-        .where('data', isGreaterThanOrEqualTo: inicioDia)
-        .where('data', isLessThan: fimDia)
-        .get();
-    if (existentes.docs.isNotEmpty) {
-      throw ReservaJaExisteException();
-    }
+    final reservaAtivaRef = _db
+        .collection('reservas_ativas')
+        .doc(_chaveReservaAtiva(usuarioId, data, tipoRefeicao));
 
     await _db.runTransaction((transacao) async {
+      // --- LEITURAS (todas antes de qualquer escrita) ---
+      final reservaAtivaSnap = await transacao.get(reservaAtivaRef);
       final dispSnap = await transacao.get(dispRef);
+      final usuarioSnap = await transacao.get(usuarioRef);
+
+      if (reservaAtivaSnap.exists) {
+        throw ReservaJaExisteException();
+      }
       if (!dispSnap.exists) {
         throw MarmitaEsgotadaException();
       }
@@ -128,7 +134,6 @@ class ReservaService {
         throw MarmitaEsgotadaException();
       }
 
-      final usuarioSnap = await transacao.get(usuarioRef);
       final saldoAtual = (usuarioSnap.data()?['saldoAtual'] ?? 0).toDouble();
       final tipoUsuario = usuarioSnap.data()?['tipo'] ?? 'estudante';
       final valorRefeicao = tipoUsuario == 'comum'
@@ -138,6 +143,8 @@ class ReservaService {
       if (saldoAtual < valorRefeicao) {
         throw SaldoInsuficienteException();
       }
+
+      // --- ESCRITAS ---
 
       // 1. Debita o saldo (valor conforme o tipo do usuário)
       transacao.update(usuarioRef, {'saldoAtual': saldoAtual - valorRefeicao});
@@ -156,7 +163,13 @@ class ReservaService {
         criadaEm: DateTime.now(),
       ).toMap());
 
-      // 4. Registra a movimentação de consumo (para o histórico)
+      // 4. Cria o marcador de "reserva ativa" (garante a unicidade)
+      transacao.set(reservaAtivaRef, {
+        'usuarioId': usuarioId,
+        'reservaId': reservaRef.id,
+      });
+
+      // 5. Registra a movimentação de consumo (para o histórico)
       transacao.set(movimentacaoRef, {
         'usuarioId': usuarioId,
         'tipo': 'consumo',
@@ -180,7 +193,7 @@ class ReservaService {
     final aberturaRefeicao = DateTime(reserva.data.year, reserva.data.month,
         reserva.data.day, horario.inicioHora);
     final limiteCancelamento =
-        aberturaRefeicao.subtract(const Duration(hours: 1));
+    aberturaRefeicao.subtract(const Duration(hours: 1));
 
     if (DateTime.now().isAfter(limiteCancelamento)) {
       throw ForaDoPrazoException(
@@ -192,17 +205,25 @@ class ReservaService {
     final dispRef = _db.collection('disponibilidades').doc(dispId);
     final usuarioRef = _db.collection('usuarios').doc(reserva.usuarioId);
     final movimentacaoRef = _db.collection('movimentacoes').doc();
+    final reservaAtivaRef = _db.collection('reservas_ativas').doc(
+        _chaveReservaAtiva(
+            reserva.usuarioId, reserva.data, reserva.tipoRefeicao));
 
     await _db.runTransaction((transacao) async {
+      // --- LEITURAS (todas antes de qualquer escrita) ---
       final dispSnap = await transacao.get(dispRef);
-      final disponivel = dispSnap.data()?['quantidadeDisponivel'] ?? 0;
+      final usuarioSnap = await transacao.get(usuarioRef);
 
+      final disponivel = dispSnap.data()?['quantidadeDisponivel'] ?? 0;
+      final saldoAtual = (usuarioSnap.data()?['saldoAtual'] ?? 0).toDouble();
+
+      // --- ESCRITAS ---
       transacao.update(reservaRef, {'status': 'cancelada'});
       transacao.update(dispRef, {'quantidadeDisponivel': disponivel + 1});
-
-      final usuarioSnap = await transacao.get(usuarioRef);
-      final saldoAtual = (usuarioSnap.data()?['saldoAtual'] ?? 0).toDouble();
       transacao.update(usuarioRef, {'saldoAtual': saldoAtual + reserva.valor});
+      // Remove o marcador de "reserva ativa" — libera o usuário para
+      // fazer uma nova reserva no mesmo dia/refeição, se quiser.
+      transacao.delete(reservaAtivaRef);
 
       transacao.set(movimentacaoRef, {
         'usuarioId': reserva.usuarioId,

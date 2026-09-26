@@ -2,18 +2,12 @@ rules_version = '2';
 
 // Regras de segurança do Firestore para o app do RU.
 //
-// MUDANÇA IMPORTANTE em relação à versão anterior: a chave primária
-// do usuário agora é o CPF (`usuarios/{cpf}`), não mais o uid do
-// Firebase Auth. Como as regras só têm acesso a `request.auth.uid`
-// (nunca ao CPF diretamente), usamos a coleção de índice
-// `uid_cpf/{uid} = { cpf }` (criada no cadastro) para "traduzir" o uid
-// autenticado no CPF correspondente, sempre que precisamos comparar
-// "este documento pertence a quem está logado?".
-//
-// Cuidado técnico usado aqui: toda função que chama get()/.data usa
-// exists() ANTES, combinado com && (que faz curto-circuito). Isso
-// evita erro de "documento não encontrado" quando o índice ou o
-// usuário ainda não existem (ex: durante o próprio cadastro).
+// MUDANÇA (revisão de segurança/LGPD): a chave primária do usuário
+// voltou a ser o uid do Firebase Auth (`usuarios/{uid}`), não mais o
+// CPF. O CPF passou a ser só um CAMPO dentro do documento do próprio
+// usuário — não aparece mais no ID do documento nem em nenhuma regra
+// abaixo. A unicidade de CPF é garantida por uma coleção separada,
+// só de checagem: `cpfs_em_uso/{cpf} = { uid }`.
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -21,80 +15,99 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function existeIndiceUid() {
-      return estaLogado() &&
-        exists(/databases/$(database)/documents/uid_cpf/$(request.auth.uid));
-    }
-
-    function meuCpf() {
-      return get(/databases/$(database)/documents/uid_cpf/$(request.auth.uid)).data.cpf;
-    }
-
-    function souDono(cpf) {
-      return existeIndiceUid() && meuCpf() == cpf;
+    function souDono(uid) {
+      return estaLogado() && request.auth.uid == uid;
     }
 
     function souAdmin() {
-      return existeIndiceUid() &&
-        exists(/databases/$(database)/documents/usuarios/$(meuCpf())) &&
-        get(/databases/$(database)/documents/usuarios/$(meuCpf())).data.tipo == 'admin';
+      return estaLogado() &&
+        exists(/databases/$(database)/documents/usuarios/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tipo == 'admin';
     }
 
-    // Índice uid -> cpf. Cada usuário só cria/lê o próprio índice.
-    // Nunca é atualizado nem apagado pelo cliente (evita alguém trocar
-    // o CPF associado ao próprio uid depois de criado).
-    match /uid_cpf/{uid} {
-      allow read: if estaLogado() && request.auth.uid == uid;
-      allow create: if estaLogado() && request.auth.uid == uid;
+    // Checagem de unicidade de CPF. NÃO guarda nenhum outro dado do
+    // usuário (só o uid dono daquele CPF) — existe só para o cadastro
+    // conseguir checar "esse CPF já está em uso?" sem precisar ler o
+    // CPF de dentro de `usuarios` (que só o próprio dono/admin pode
+    // ler). Cada um só cria a própria entrada; nunca é atualizada nem
+    // apagada pelo cliente (evita alguém "liberar" um CPF alheio).
+    match /cpfs_em_uso/{cpf} {
+      allow read: if estaLogado();
+      allow create: if estaLogado() && request.resource.data.uid == request.auth.uid;
       allow update, delete: if false;
     }
 
-    // Usuário: cada um só lê/edita o próprio documento (agora indexado
-    // pelo CPF). Ninguém pode alterar o próprio "tipo" (evita virar
-    // admin sozinho) nem o próprio "saldoAtual" diretamente — isso só
-    // é alterado por transações controladas nos services
-    // (recarga/reserva).
-    match /usuarios/{cpf} {
-      allow read: if souDono(cpf) || souAdmin();
-      // Na criação ainda não existe uid_cpf/{uid}, então validamos
-      // diretamente que o uid gravado no documento é o de quem está
-      // autenticado (em vez de usar souDono, que dependeria do índice).
-      allow create: if estaLogado() && request.resource.data.uid == request.auth.uid;
+    // Usuário: cada um só lê/edita o próprio documento (indexado pelo
+    // uid). Ninguém pode alterar o próprio "tipo" (evita virar admin
+    // sozinho). O "saldoAtual" PODE ser alterado pelo dono — é assim
+    // que recarga, reserva (débito) e cancelamento (estorno)
+    // funcionam, já que não existe backend/Cloud Function rodando
+    // essas transações; é o próprio app do usuário que escreve.
+    // Como a recarga é simulada (MVP, sem pagamento real), esse saldo
+    // não é "dinheiro de verdade" que precise de trava rígida contra
+    // o próprio dono — o recurso realmente escasso e protegido é a
+    // marmita física, controlada em `disponibilidades` (ver abaixo).
+    match /usuarios/{uid} {
+      allow read: if souDono(uid) || souAdmin();
+      allow create: if souDono(uid);
       allow update: if souAdmin() ||
-        (souDono(cpf) &&
-         request.resource.data.tipo == resource.data.tipo &&
-         request.resource.data.saldoAtual == resource.data.saldoAtual);
+        (souDono(uid) && request.resource.data.tipo == resource.data.tipo);
     }
 
-    // Reservas: usuarioId agora é o CPF. Usuário só vê/gerencia as
-    // próprias; admin vê todas.
+    // Reservas: usuarioId agora é o uid. Usuário só vê/gerencia as
+    // próprias; admin vê e altera todas. O dono só pode fazer UMA
+    // coisa via update direto: cancelar a própria reserva (mudar
+    // `status` de 'confirmada' para 'cancelada', mais nenhum campo).
+    // Qualquer outra transição (utilizada, naoRetirada, mexer no
+    // valor etc.) só o admin.
     match /reservas/{reservaId} {
       allow read: if souAdmin() ||
-        (estaLogado() && resource.data.usuarioId == meuCpf());
+        (estaLogado() && resource.data.usuarioId == request.auth.uid);
       allow create: if estaLogado() &&
-        request.resource.data.usuarioId == meuCpf();
+        request.resource.data.usuarioId == request.auth.uid;
       allow update: if souAdmin() ||
-        (estaLogado() && resource.data.usuarioId == meuCpf());
+        (estaLogado() &&
+         resource.data.usuarioId == request.auth.uid &&
+         resource.data.status == 'confirmada' &&
+         request.resource.data.diff(resource.data).affectedKeys()
+           .hasOnly(['status']) &&
+         request.resource.data.status == 'cancelada');
       allow delete: if false;
     }
 
-    // Movimentações financeiras: usuarioId agora é o CPF. Só o dono lê;
-    // ninguém escreve direto do cliente fora do fluxo dos services
+    // Marcador de "reserva ativa" (ID determinístico:
+    // {uid}_{AAAA-MM-DD}_{tipoRefeicao}). Existe só enquanto o
+    // usuário tem uma reserva confirmada para aquele dia/refeição —
+    // é criado dentro da transação de criarReserva e apagado dentro
+    // da transação de cancelarReserva. Garante, de forma atômica, que
+    // ninguém consiga ter 2 reservas confirmadas do mesmo dia/refeição
+    // (ver ReservaService).
+    match /reservas_ativas/{id} {
+      allow read: if souAdmin() ||
+        (estaLogado() && resource.data.usuarioId == request.auth.uid);
+      allow create: if estaLogado() &&
+        request.resource.data.usuarioId == request.auth.uid;
+      allow delete: if souAdmin() ||
+        (estaLogado() && resource.data.usuarioId == request.auth.uid);
+      allow update: if false;
+    }
+
+    // Movimentações financeiras: usuarioId agora é o uid. Só o dono
+    // lê; ninguém escreve direto do cliente fora do fluxo dos services
     // (idealmente migraria para Cloud Functions numa versão futura).
     match /movimentacoes/{id} {
       allow read: if souAdmin() ||
-        (estaLogado() && resource.data.usuarioId == meuCpf());
+        (estaLogado() && resource.data.usuarioId == request.auth.uid);
       allow create: if estaLogado() &&
-        request.resource.data.usuarioId == meuCpf();
+        request.resource.data.usuarioId == request.auth.uid;
       allow update, delete: if false;
     }
 
-    // Matrículas válidas (nova coleção): o admin cadastra/apaga; leitura
-    // liberada para logados. A "marcação de usada" precisa poder
-    // acontecer no meio do cadastro do estudante — quando o índice
-    // uid_cpf ainda NÃO existe — por isso o self-service abaixo não
-    // depende de souAdmin()/souDono(), só confere a transição de
-    // usada:false -> usada:true.
+    // Matrículas válidas: o admin cadastra/apaga; leitura liberada
+    // para logados. A "marcação de usada" precisa poder acontecer no
+    // meio do cadastro do estudante — antes de existir
+    // usuarios/{uid} — por isso o self-service abaixo não depende de
+    // souAdmin(), só confere a transição de usada:false -> usada:true.
     match /matriculas_validas/{matricula} {
       allow read: if estaLogado();
       allow create, delete: if souAdmin();
@@ -105,15 +118,31 @@ service cloud.firestore {
     }
 
     // Disponibilidade de marmitas: todo usuário logado pode ler
-    // (precisa ver quantas restam); admin define a quantidade total,
-    // e o próprio app do estudante decrementa quantidadeDisponivel na
-    // hora de reservar (dentro da transação de criarReserva).
+    // (precisa ver quantas restam); admin define/redefine a
+    // quantidade total livremente. Um usuário comum SÓ pode mudar
+    // `quantidadeDisponivel` em exatamente 1 por chamada — pra menos
+    // (reserva, dentro da transação de criarReserva) ou pra mais
+    // (cancelamento, devolvendo a marmita) — e não pode mexer em
+    // nenhum outro campo nem setar valor arbitrário.
     match /disponibilidades/{id} {
       allow read: if estaLogado();
-      allow write: if souAdmin() || estaLogado();
-      // Observação para a apresentação/TCC: o ideal seria restringir
-      // ainda mais essa escrita (ex: só permitir decrementar 1 por vez)
-      // usando Cloud Functions. Documentem isso como melhoria futura.
+      allow create: if souAdmin();
+      allow update: if souAdmin() ||
+        (estaLogado() &&
+         request.resource.data.diff(resource.data).affectedKeys()
+           .hasOnly(['quantidadeDisponivel']) &&
+         (resource.data.quantidadeDisponivel -
+            request.resource.data.quantidadeDisponivel == 1 ||
+          request.resource.data.quantidadeDisponivel -
+            resource.data.quantidadeDisponivel == 1) &&
+         request.resource.data.quantidadeDisponivel >= 0 &&
+         request.resource.data.quantidadeDisponivel <=
+           resource.data.quantidadeTotal);
+      allow delete: if souAdmin();
+      // Observação para a apresentação/TCC: o ideal a longo prazo
+      // seria mover essas mudanças para uma Cloud Function (exige
+      // plano Blaze). Essa regra é a versão "sem custo de infra"
+      // que ainda impede um usuário de escrever um valor arbitrário.
     }
 
     // Cardápio: leitura pública para logados; só admin edita.

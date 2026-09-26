@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../services/auth_service.dart';
+import '../../utils/validadores.dart';
 
 /// Cadastro de usuário COMUM: só pede CPF (chave primária), sem
 /// matrícula. Paga o valor cheio da refeição (R$ 17,00).
@@ -30,7 +31,7 @@ class _CadastroComumScreenState extends State<CadastroComumScreen> {
     try {
       await _authService.cadastrarComum(
         nome: _nomeController.text.trim(),
-        cpf: _cpfController.text.trim(),
+        cpf: limparCpf(_cpfController.text),
         email: _emailController.text.trim(),
         senha: _senhaController.text,
       );
@@ -41,7 +42,7 @@ class _CadastroComumScreenState extends State<CadastroComumScreen> {
       final mensagem = e.toString().contains('CpfJaCadastradoException')
           ? 'Já existe uma conta cadastrada com este CPF.'
           : 'Não foi possível cadastrar. Verifique os dados (o e-mail pode '
-              'já estar em uso).';
+          'já estar em uso).';
       setState(() => _erro = mensagem);
     } finally {
       if (mounted) setState(() => _carregando = false);
@@ -67,7 +68,7 @@ class _CadastroComumScreenState extends State<CadastroComumScreen> {
                     border: OutlineInputBorder(),
                   ),
                   validator: (v) =>
-                      (v == null || v.trim().isEmpty) ? 'Informe o nome' : null,
+                  (v == null || v.trim().isEmpty) ? 'Informe o nome' : null,
                 ),
                 const SizedBox(height: 16),
                 TextFormField(
@@ -78,9 +79,11 @@ class _CadastroComumScreenState extends State<CadastroComumScreen> {
                     border: OutlineInputBorder(),
                     helperText: 'É o identificador da sua conta no sistema.',
                   ),
-                  validator: (v) => (v == null || v.trim().length < 11)
-                      ? 'CPF inválido'
-                      : null,
+                  validator: (v) {
+                    if (v == null || v.trim().isEmpty) return 'Informe o CPF';
+                    if (!validarCpf(v)) return 'CPF inválido';
+                    return null;
+                  },
                 ),
                 const SizedBox(height: 16),
                 TextFormField(
@@ -91,7 +94,7 @@ class _CadastroComumScreenState extends State<CadastroComumScreen> {
                     border: OutlineInputBorder(),
                   ),
                   validator: (v) =>
-                      (v == null || !v.contains('@')) ? 'E-mail inválido' : null,
+                  (v == null || !v.contains('@')) ? 'E-mail inválido' : null,
                 ),
                 const SizedBox(height: 16),
                 TextFormField(
@@ -115,10 +118,10 @@ class _CadastroComumScreenState extends State<CadastroComumScreen> {
                   style: ElevatedButton.styleFrom(padding: const EdgeInsets.all(16)),
                   child: _carregando
                       ? const SizedBox(
-                          height: 20,
-                          width: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
+                    height: 20,
+                    width: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
                       : const Text('Cadastrar'),
                 ),
               ],

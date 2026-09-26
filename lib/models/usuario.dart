@@ -27,29 +27,26 @@ String tipoUsuarioToString(TipoUsuario tipo) {
 }
 
 /// Representa um usuário do sistema.
-/// Coleção Firestore: usuarios/{cpf}
+/// Coleção Firestore: usuarios/{uid}
 ///
-/// MUDANÇA IMPORTANTE (decisão do grupo): a CHAVE PRIMÁRIA do usuário
-/// no banco agora é o CPF, não mais o uid do Firebase Auth. Ou seja,
-/// `Usuario.id` == CPF (sem pontos/traço) e é também o id do
-/// documento em `usuarios`.
+/// MUDANÇA (decisão do grupo, revisão de segurança/LGPD): a chave
+/// primária do documento voltou a ser o `uid` do Firebase Auth (não
+/// mais o CPF). O CPF continua existindo, mas agora é só um CAMPO
+/// dentro do documento — deixa de aparecer em toda referência,
+/// regra de segurança e log do sistema (antes, com CPF como ID,
+/// qualquer path tipo `usuarios/12345678900` já expunha o CPF real).
 ///
-/// Isso cria um problema técnico: o login no Firebase Auth continua
-/// sendo por e-mail/senha e o Auth só devolve um `uid`, não o CPF.
-/// Para resolver isso sem duplicar a lógica de autenticação, existe
-/// uma coleção auxiliar `uid_cpf/{uid} = { cpf }` que funciona como
-/// um "índice": dado o uid que o Firebase Auth devolveu no login,
-/// buscamos o cpf ali, e só então buscamos `usuarios/{cpf}`.
+/// Unicidade de CPF (não pode haver 2 contas com o mesmo CPF) agora é
+/// garantida por uma coleção auxiliar só de checagem:
+/// `cpfs_em_uso/{cpf} = { uid }` — o inverso do antigo `uid_cpf`.
 /// Ver AuthService para a implementação completa desse fluxo.
 ///
 /// - `matricula`: preenchida SÓ quando tipo == estudante. Ela não é a
 ///   chave do documento — serve apenas para confirmar que a pessoa é
 ///   estudante (e portanto paga o valor de estudante na refeição).
-/// - `uid`: guardado aqui também (além do índice uid_cpf) para
-///   facilitar consultas futuras a partir do documento do usuário.
 class Usuario {
-  final String id; // CPF (chave primária, sem formatação: só números)
-  final String uid; // uid do Firebase Auth (para referência)
+  final String id; // uid do Firebase Auth (chave primária do documento)
+  final String cpf; // CPF, sem formatação (só números) — agora só um campo
   final String nome;
   final String email;
   final TipoUsuario tipo;
@@ -59,7 +56,7 @@ class Usuario {
 
   Usuario({
     required this.id,
-    required this.uid,
+    required this.cpf,
     required this.nome,
     required this.email,
     required this.tipo,
@@ -70,12 +67,11 @@ class Usuario {
 
   bool get isAdmin => tipo == TipoUsuario.admin;
   bool get isEstudante => tipo == TipoUsuario.estudante;
-  String get cpf => id;
 
   factory Usuario.fromMap(String id, Map<String, dynamic> map) {
     return Usuario(
       id: id,
-      uid: map['uid'] ?? '',
+      cpf: map['cpf'] ?? '',
       nome: map['nome'] ?? '',
       email: map['email'] ?? '',
       tipo: tipoUsuarioFromString(map['tipo'] ?? 'estudante'),
@@ -87,7 +83,7 @@ class Usuario {
 
   Map<String, dynamic> toMap() {
     return {
-      'uid': uid,
+      'cpf': cpf,
       'nome': nome,
       'email': email,
       'tipo': tipoUsuarioToString(tipo),
