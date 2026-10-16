@@ -44,6 +44,10 @@ class Movimentacao {
   final DateTime data;
   final String? reservaId; // preenchido quando tipo == consumo/estorno
 
+  /// Forma de pagamento da recarga: 'pix' ou 'cartao'. Nulo em
+  /// movimentações antigas e em consumo/estorno.
+  final String? metodo;
+
   Movimentacao({
     required this.id,
     required this.usuarioId,
@@ -52,6 +56,7 @@ class Movimentacao {
     required this.status,
     required this.data,
     this.reservaId,
+    this.metodo,
   });
 
   factory Movimentacao.fromMap(String id, Map<String, dynamic> map) {
@@ -63,6 +68,7 @@ class Movimentacao {
       status: statusMovimentacaoFromString(map['status'] ?? 'pendente'),
       data: map['data']?.toDate() ?? DateTime.now(),
       reservaId: map['reservaId'],
+      metodo: map['metodo'],
     );
   }
 
@@ -74,6 +80,7 @@ class Movimentacao {
       'status': statusMovimentacaoToStringHelper(status),
       'data': data,
       'reservaId': reservaId,
+      'metodo': metodo,
     };
   }
 }

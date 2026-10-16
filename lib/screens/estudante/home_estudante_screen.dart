@@ -10,6 +10,9 @@ import 'saldo_tab.dart';
 ///   Início  -> "vale a pena ir ao RU agora?" (lotação + cardápio)
 ///   Reservar -> reservar/cancelar marmita
 ///   Saldo   -> ver saldo, recarregar, histórico
+///
+/// Todas as abas têm cabeçalho verde próprio (com o botão de sair),
+/// por isso não há AppBar padrão aqui.
 class HomeEstudanteScreen extends StatefulWidget {
   final Usuario usuario;
   const HomeEstudanteScreen({super.key, required this.usuario});
@@ -25,22 +28,23 @@ class _HomeEstudanteScreenState extends State<HomeEstudanteScreen> {
   @override
   Widget build(BuildContext context) {
     final abas = [
-      InicioTab(usuario: widget.usuario),
-      ReservaTab(usuario: widget.usuario),
-      SaldoTab(usuario: widget.usuario),
+      InicioTab(
+        usuario: widget.usuario,
+        onSair: () => _authService.logout(),
+      ),
+      ReservaTab(
+        usuario: widget.usuario,
+        onVoltar: () => setState(() => _abaAtual = 0),
+        onSair: () => _authService.logout(),
+      ),
+      SaldoTab(
+        usuario: widget.usuario,
+        onVoltar: () => setState(() => _abaAtual = 0),
+        onSair: () => _authService.logout(),
+      ),
     ];
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text('Olá, ${widget.usuario.nome.split(' ').first}'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.logout),
-            tooltip: 'Sair',
-            onPressed: () => _authService.logout(),
-          ),
-        ],
-      ),
       body: abas[_abaAtual],
       bottomNavigationBar: NavigationBar(
         selectedIndex: _abaAtual,
