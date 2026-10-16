@@ -39,13 +39,21 @@ class ReservaService {
   }
 
   Stream<List<Reserva>> reservasDoUsuario(String usuarioId) {
+    // Ordenação feita no app: where + orderBy em campos diferentes exigiria
+    // um índice composto no Firestore (mesmo problema do histórico de saldo).
     return _db
         .collection('reservas')
         .where('usuarioId', isEqualTo: usuarioId)
-        .orderBy('data', descending: true)
         .snapshots()
-        .map((snap) =>
-        snap.docs.map((d) => Reserva.fromMap(d.id, d.data())).toList());
+        .map((snap) {
+      final lista =
+          snap.docs.map((d) => Reserva.fromMap(d.id, d.data())).toList();
+      lista.sort((a, b) {
+        final porData = b.data.compareTo(a.data);
+        return porData != 0 ? porData : b.criadaEm.compareTo(a.criadaEm);
+      });
+      return lista;
+    });
   }
 
   Stream<Disponibilidade?> disponibilidadeStream(
@@ -94,6 +102,7 @@ class ReservaService {
     required String usuarioId, // = CPF
     required DateTime data,
     required TipoRefeicao tipoRefeicao,
+    bool vegetariana = false,
   }) async {
     final horarios = await _configService.buscarHorarios();
     final horario = horarios[tipoRefeicaoToString(tipoRefeicao)]!;
@@ -161,6 +170,7 @@ class ReservaService {
         valor: valorRefeicao,
         status: StatusReserva.confirmada,
         criadaEm: DateTime.now(),
+        vegetariana: vegetariana,
       ).toMap());
 
       // 4. Cria o marcador de "reserva ativa" (garante a unicidade)
