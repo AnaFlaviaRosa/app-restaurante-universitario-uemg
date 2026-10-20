@@ -1,0 +1,167 @@
+rules_version = '2';
+
+// Regras de segurança do Firestore para o app do RU.
+//
+// MUDANÇA (revisão de segurança/LGPD): a chave primária do usuário
+// voltou a ser o uid do Firebase Auth (`usuarios/{uid}`), não mais o
+// CPF. O CPF passou a ser só um CAMPO dentro do documento do próprio
+// usuário — não aparece mais no ID do documento nem em nenhuma regra
+// abaixo. A unicidade de CPF é garantida por uma coleção separada,
+// só de checagem: `cpfs_em_uso/{cpf} = { uid }`.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function estaLogado() {
+      return request.auth != null;
+    }
+
+    function souDono(uid) {
+      return estaLogado() && request.auth.uid == uid;
+    }
+
+    function souAdmin() {
+      return estaLogado() &&
+        exists(/databases/$(database)/documents/usuarios/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.tipo == 'admin';
+    }
+
+    // Checagem de unicidade de CPF. NÃO guarda nenhum outro dado do
+    // usuário (só o uid dono daquele CPF) — existe só para o cadastro
+    // conseguir checar "esse CPF já está em uso?" sem precisar ler o
+    // CPF de dentro de `usuarios` (que só o próprio dono/admin pode
+    // ler). Cada um só cria a própria entrada; nunca é atualizada nem
+    // apagada pelo cliente (evita alguém "liberar" um CPF alheio).
+    match /cpfs_em_uso/{cpf} {
+      allow read: if estaLogado();
+      allow create: if estaLogado() && request.resource.data.uid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // Usuário: cada um só lê/edita o próprio documento (indexado pelo
+    // uid). Ninguém pode alterar o próprio "tipo" (evita virar admin
+    // sozinho). O "saldoAtual" PODE ser alterado pelo dono — é assim
+    // que recarga, reserva (débito) e cancelamento (estorno)
+    // funcionam, já que não existe backend/Cloud Function rodando
+    // essas transações; é o próprio app do usuário que escreve.
+    // Como a recarga é simulada (MVP, sem pagamento real), esse saldo
+    // não é "dinheiro de verdade" que precise de trava rígida contra
+    // o próprio dono — o recurso realmente escasso e protegido é a
+    // marmita física, controlada em `disponibilidades` (ver abaixo).
+    match /usuarios/{uid} {
+      allow read: if souDono(uid) || souAdmin();
+      allow create: if souDono(uid);
+      allow update: if souAdmin() ||
+        (souDono(uid) && request.resource.data.tipo == resource.data.tipo);
+    }
+
+    // Reservas: usuarioId agora é o uid. Usuário só vê/gerencia as
+    // próprias; admin vê e altera todas. O dono só pode fazer UMA
+    // coisa via update direto: cancelar a própria reserva (mudar
+    // `status` de 'confirmada' para 'cancelada', mais nenhum campo).
+    // Qualquer outra transição (utilizada, naoRetirada, mexer no
+    // valor etc.) só o admin.
+    match /reservas/{reservaId} {
+      allow read: if souAdmin() ||
+        (estaLogado() && resource.data.usuarioId == request.auth.uid);
+      allow create: if estaLogado() &&
+        request.resource.data.usuarioId == request.auth.uid;
+      allow update: if souAdmin() ||
+        (estaLogado() &&
+         resource.data.usuarioId == request.auth.uid &&
+         resource.data.status == 'confirmada' &&
+         request.resource.data.diff(resource.data).affectedKeys()
+           .hasOnly(['status']) &&
+         request.resource.data.status == 'cancelada');
+      allow delete: if false;
+    }
+
+    // Marcador de "reserva ativa" (ID determinístico:
+    // {uid}_{AAAA-MM-DD}_{tipoRefeicao}). Existe só enquanto o
+    // usuário tem uma reserva confirmada para aquele dia/refeição —
+    // é criado dentro da transação de criarReserva e apagado dentro
+    // da transação de cancelarReserva. Garante, de forma atômica, que
+    // ninguém consiga ter 2 reservas confirmadas do mesmo dia/refeição
+    // (ver ReservaService).
+    match /reservas_ativas/{id} {
+      allow read: if souAdmin() ||
+        (estaLogado() && resource.data.usuarioId == request.auth.uid);
+      allow create: if estaLogado() &&
+        request.resource.data.usuarioId == request.auth.uid;
+      allow delete: if souAdmin() ||
+        (estaLogado() && resource.data.usuarioId == request.auth.uid);
+      allow update: if false;
+    }
+
+    // Movimentações financeiras: usuarioId agora é o uid. Só o dono
+    // lê; ninguém escreve direto do cliente fora do fluxo dos services
+    // (idealmente migraria para Cloud Functions numa versão futura).
+    match /movimentacoes/{id} {
+      allow read: if souAdmin() ||
+        (estaLogado() && resource.data.usuarioId == request.auth.uid);
+      allow create: if estaLogado() &&
+        request.resource.data.usuarioId == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // Matrículas válidas: o admin cadastra/apaga; leitura liberada
+    // para logados. A "marcação de usada" precisa poder acontecer no
+    // meio do cadastro do estudante — antes de existir
+    // usuarios/{uid} — por isso o self-service abaixo não depende de
+    // souAdmin(), só confere a transição de usada:false -> usada:true.
+    match /matriculas_validas/{matricula} {
+      allow read: if estaLogado();
+      allow create, delete: if souAdmin();
+      allow update: if souAdmin() ||
+        (estaLogado() &&
+         resource.data.usada == false &&
+         request.resource.data.usada == true);
+    }
+
+    // Disponibilidade de marmitas: todo usuário logado pode ler
+    // (precisa ver quantas restam); admin define/redefine a
+    // quantidade total livremente. Um usuário comum SÓ pode mudar
+    // `quantidadeDisponivel` em exatamente 1 por chamada — pra menos
+    // (reserva, dentro da transação de criarReserva) ou pra mais
+    // (cancelamento, devolvendo a marmita) — e não pode mexer em
+    // nenhum outro campo nem setar valor arbitrário.
+    match /disponibilidades/{id} {
+      allow read: if estaLogado();
+      allow create: if souAdmin();
+      allow update: if souAdmin() ||
+        (estaLogado() &&
+         request.resource.data.diff(resource.data).affectedKeys()
+           .hasOnly(['quantidadeDisponivel']) &&
+         (resource.data.quantidadeDisponivel -
+            request.resource.data.quantidadeDisponivel == 1 ||
+          request.resource.data.quantidadeDisponivel -
+            resource.data.quantidadeDisponivel == 1) &&
+         request.resource.data.quantidadeDisponivel >= 0 &&
+         request.resource.data.quantidadeDisponivel <=
+           resource.data.quantidadeTotal);
+      allow delete: if souAdmin();
+      // Observação para a apresentação/TCC: o ideal a longo prazo
+      // seria mover essas mudanças para uma Cloud Function (exige
+      // plano Blaze). Essa regra é a versão "sem custo de infra"
+      // que ainda impede um usuário de escrever um valor arbitrário.
+    }
+
+    // Cardápio: leitura pública para logados; só admin edita.
+    match /cardapios/{id} {
+      allow read: if estaLogado();
+      allow write: if souAdmin();
+    }
+
+    // Lotação: leitura pública para logados; só admin edita.
+    match /lotacao/{id} {
+      allow read: if estaLogado();
+      allow write: if souAdmin();
+    }
+
+    // Configurações (horários das refeições, preços por tipo de
+    // usuário): leitura pública para logados; só admin edita.
+    match /config/{id} {
+      allow read: if estaLogado();
+      allow write: if souAdmin();
+    }
+  }
+}
