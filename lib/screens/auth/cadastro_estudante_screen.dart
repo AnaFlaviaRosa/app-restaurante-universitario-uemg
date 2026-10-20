@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../services/auth_service.dart';
 import '../../services/matricula_service.dart';
 import '../../utils/validadores.dart';
+import '../../widgets/auth_layout.dart';
 
 /// Cadastro de ESTUDANTE.
 ///
@@ -56,7 +57,7 @@ class _CadastroEstudanteScreenState extends State<CadastroEstudanteScreen> {
       final mensagem = e.toString().contains('CpfJaCadastradoException')
           ? 'Já existe uma conta cadastrada com este CPF.'
           : 'Não foi possível cadastrar. Verifique os dados (o e-mail pode '
-              'já estar em uso).';
+          'já estar em uso).';
       setState(() => _erro = mensagem);
     } finally {
       if (mounted) setState(() => _carregando = false);
@@ -65,97 +66,78 @@ class _CadastroEstudanteScreenState extends State<CadastroEstudanteScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Cadastro — Estudante')),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: Form(
-            key: _formKey,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                TextFormField(
-                  controller: _nomeController,
-                  decoration: const InputDecoration(
-                    labelText: 'Nome completo',
-                    border: OutlineInputBorder(),
-                  ),
-                  validator: (v) =>
-                      (v == null || v.trim().isEmpty) ? 'Informe o nome' : null,
-                ),
-                const SizedBox(height: 16),
-                TextFormField(
-                  controller: _cpfController,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: 'CPF (só números)',
-                    border: OutlineInputBorder(),
-                    helperText: 'É o identificador da sua conta no sistema.',
-                  ),
-                  validator: (v) {
-                    if (v == null || v.trim().isEmpty) return 'Informe o CPF';
-                    if (!validarCpf(v)) return 'CPF inválido';
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 16),
-                TextFormField(
-                  controller: _matriculaController,
-                  decoration: const InputDecoration(
-                    labelText: 'Matrícula',
-                    border: OutlineInputBorder(),
-                    helperText:
-                        'Precisa estar liberada pela administração do RU.',
-                  ),
-                  validator: (v) => (v == null || v.trim().isEmpty)
-                      ? 'Informe a matrícula'
-                      : null,
-                ),
-                const SizedBox(height: 16),
-                TextFormField(
-                  controller: _emailController,
-                  keyboardType: TextInputType.emailAddress,
-                  decoration: const InputDecoration(
-                    labelText: 'E-mail',
-                    border: OutlineInputBorder(),
-                  ),
-                  validator: (v) =>
-                      (v == null || !v.contains('@')) ? 'E-mail inválido' : null,
-                ),
-                const SizedBox(height: 16),
-                TextFormField(
-                  controller: _senhaController,
-                  obscureText: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Senha (mín. 6 caracteres)',
-                    border: OutlineInputBorder(),
-                  ),
-                  validator: (v) => (v == null || v.length < 6)
-                      ? 'A senha precisa ter pelo menos 6 caracteres'
-                      : null,
-                ),
-                if (_erro != null) ...[
-                  const SizedBox(height: 12),
-                  Text(_erro!, style: const TextStyle(color: Colors.red)),
-                ],
-                const SizedBox(height: 24),
-                ElevatedButton(
-                  onPressed: _carregando ? null : _cadastrar,
-                  style: ElevatedButton.styleFrom(padding: const EdgeInsets.all(16)),
-                  child: _carregando
-                      ? const SizedBox(
-                          height: 20,
-                          width: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Text('Cadastrar'),
+    return AuthLayout(
+      titulo: 'Cadastro',
+      subtitulo: 'Estudante',
+      mostrarVoltar: true,
+      children: [
+        Form(
+          key: _formKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              AuthCampo(
+                controller: _nomeController,
+                rotulo: 'Nome Completo',
+                validator: (v) =>
+                (v == null || v.trim().isEmpty) ? 'Informe o nome' : null,
+              ),
+              const SizedBox(height: 14),
+              AuthCampo(
+                controller: _cpfController,
+                rotulo: 'CPF (só números)',
+                keyboardType: TextInputType.number,
+                ajuda: 'É o identificador da sua conta no sistema.',
+                validator: (v) {
+                  if (v == null || v.trim().isEmpty) return 'Informe o CPF';
+                  if (!validarCpf(v)) return 'CPF inválido';
+                  return null;
+                },
+              ),
+              const SizedBox(height: 14),
+              AuthCampo(
+                controller: _matriculaController,
+                rotulo: 'Matrícula',
+                ajuda: 'Precisa estar liberada pela administração do RU.',
+                validator: (v) => (v == null || v.trim().isEmpty)
+                    ? 'Informe a matrícula'
+                    : null,
+              ),
+              const SizedBox(height: 14),
+              AuthCampo(
+                controller: _emailController,
+                rotulo: 'Email',
+                keyboardType: TextInputType.emailAddress,
+                validator: (v) =>
+                (v == null || !v.contains('@')) ? 'E-mail inválido' : null,
+              ),
+              const SizedBox(height: 14),
+              AuthCampo(
+                controller: _senhaController,
+                rotulo: 'Senha (mín. 6 caracteres)',
+                obscureText: true,
+                validator: (v) => (v == null || v.length < 6)
+                    ? 'A senha precisa ter pelo menos 6 caracteres'
+                    : null,
+              ),
+              if (_erro != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  _erro!,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.red, fontSize: 12),
                 ),
               ],
-            ),
+              const SizedBox(height: 26),
+              AuthBotao(
+                texto: 'Cadastrar',
+                carregando: _carregando,
+                onPressed: _cadastrar,
+              ),
+            ],
           ),
         ),
-      ),
+      ],
     );
   }
 }

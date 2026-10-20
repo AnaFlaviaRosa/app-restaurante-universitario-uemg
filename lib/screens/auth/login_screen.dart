@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../services/auth_service.dart';
+import '../../widgets/auth_layout.dart';
 import 'escolha_tipo_cadastro_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -92,84 +93,71 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
-            child: Form(
-              key: _formKey,
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const Icon(Icons.restaurant, size: 64, color: Colors.green),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'RU UEMG - Passos',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 32),
-                  TextFormField(
-                    controller: _emailController,
-                    keyboardType: TextInputType.emailAddress,
-                    decoration: const InputDecoration(
-                      labelText: 'E-mail',
-                      border: OutlineInputBorder(),
-                    ),
-                    validator: (v) =>
-                    (v == null || !v.contains('@')) ? 'E-mail inválido' : null,
-                  ),
-                  const SizedBox(height: 16),
-                  TextFormField(
-                    controller: _senhaController,
-                    obscureText: true,
-                    decoration: const InputDecoration(
-                      labelText: 'Senha',
-                      border: OutlineInputBorder(),
-                    ),
-                    validator: (v) => (v == null || v.length < 6)
-                        ? 'A senha precisa ter pelo menos 6 caracteres'
-                        : null,
-                  ),
-                  if (_erro != null) ...[
-                    const SizedBox(height: 12),
-                    Text(_erro!, style: const TextStyle(color: Colors.red)),
-                  ],
-                  const SizedBox(height: 24),
-                  ElevatedButton(
-                    onPressed: _carregando ? null : _entrar,
-                    style: ElevatedButton.styleFrom(padding: const EdgeInsets.all(16)),
-                    child: _carregando
-                        ? const SizedBox(
-                      height: 20,
-                      width: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                        : const Text('Entrar'),
-                  ),
-                  const SizedBox(height: 4),
-                  TextButton(
-                    onPressed: _abrirDialogoRedefinirSenha,
-                    child: const Text('Esqueci minha senha'),
-                  ),
-                  TextButton(
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (_) => const EscolhaTipoCadastroScreen()),
-                      );
-                    },
-                    child: const Text('Ainda não tenho conta — Cadastrar'),
-                  ),
-                ],
+    return AuthLayout(
+      titulo: 'Login',
+      children: [
+        Form(
+          key: _formKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              AuthCampo(
+                controller: _emailController,
+                rotulo: 'Email',
+                keyboardType: TextInputType.emailAddress,
+                validator: (v) =>
+                (v == null || !v.contains('@')) ? 'E-mail inválido' : null,
               ),
-            ),
+              const SizedBox(height: 14),
+              AuthCampo(
+                controller: _senhaController,
+                rotulo: 'Senha',
+                obscureText: true,
+                validator: (v) => (v == null || v.length < 6)
+                    ? 'A senha precisa ter pelo menos 6 caracteres'
+                    : null,
+              ),
+              if (_erro != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  _erro!,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.red, fontSize: 12),
+                ),
+              ],
+              const SizedBox(height: 26),
+              AuthBotao(
+                texto: 'Entrar',
+                carregando: _carregando,
+                onPressed: _entrar,
+              ),
+              const SizedBox(height: 6),
+              TextButton.icon(
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => const EscolhaTipoCadastroScreen()),
+                  );
+                },
+                icon: const Icon(Icons.person_outline,
+                    size: 18, color: Colors.black87),
+                label: const Text(
+                  'Cadastrar',
+                  style: TextStyle(color: Colors.black87, fontSize: 13),
+                ),
+              ),
+              TextButton(
+                onPressed: _abrirDialogoRedefinirSenha,
+                child: const Text(
+                  'Esqueci minha senha',
+                  style: TextStyle(color: Colors.black54, fontSize: 12),
+                ),
+              ),
+            ],
           ),
         ),
-      ),
+      ],
     );
   }
 }
