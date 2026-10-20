@@ -1,5 +1,0 @@
-git status
-git add .
-git commit -m "O que você alterou no código?"
-git pull
-git push

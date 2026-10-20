@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../../models/usuario.dart';
+import '../../models/cardapio.dart';
 import '../../models/lotacao.dart';
+import '../../services/cardapio_service.dart';
 import '../../services/lotacao_service.dart';
 import '../../theme/cores.dart';
 
@@ -8,8 +10,9 @@ import '../../theme/cores.dart';
 ///
 /// Mostra a lotação atual (atualizada manualmente pelo administrador no
 /// MVP) e o cardápio do dia, que é uma IMAGEM única (o mesmo cardápio vale
-/// para almoço e janta). A imagem fica em assets/images/cardapio.jpeg;
-/// para atualizar o cardápio, basta trocar esse arquivo.
+/// para almoço e janta). A imagem vem do Firestore (cardapios/atual) e é
+/// enviada pelo administrador, na aba Lotação do painel dele. Aqui o
+/// usuário só VÊ o cardápio — não há nenhum botão de edição.
 ///
 /// Visual: cabeçalho verde com avatar e "Olá, Nome" + painel branco
 /// arredondado com lotação, última atualização e a imagem do cardápio.
@@ -26,15 +29,16 @@ class InicioTab extends StatefulWidget {
 }
 
 class _InicioTabState extends State<InicioTab> {
-  static const _imagemCardapio = 'assets/images/cardapio.jpeg';
-
   final _lotacaoService = LotacaoService();
+  final _cardapioService = CardapioService();
   late Stream<Lotacao?> _lotacaoStream;
+  late Stream<Cardapio?> _cardapioStream;
 
   @override
   void initState() {
     super.initState();
     _lotacaoStream = _lotacaoService.lotacaoStream();
+    _cardapioStream = _cardapioService.cardapioStream();
   }
 
   // ---------- formatação ----------
@@ -198,7 +202,7 @@ class _InicioTabState extends State<InicioTab> {
     );
   }
 
-  // ---------- cardápio (imagem) ----------
+  // ---------- cardápio (imagem vinda do Firestore) ----------
 
   Widget _blocoCardapio() {
     return Column(
@@ -209,42 +213,93 @@ class _InicioTabState extends State<InicioTab> {
           style: TextStyle(color: Colors.black87, fontSize: 13),
         ),
         const SizedBox(height: 12),
-        GestureDetector(
-          onTap: _abrirCardapioAmpliado,
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(22),
-            child: Image.asset(
-              _imagemCardapio,
-              width: double.infinity,
-              fit: BoxFit.fitWidth,
-              errorBuilder: (context, erro, stack) {
-                debugPrint('ERRO IMAGEM CARDÁPIO: $erro');
-                return Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(
-                      vertical: 36, horizontal: 20),
-                  color: Cores.fundo,
-                  child: const Text(
-                    'Não foi possível carregar o cardápio.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Color(0xFF666666), fontSize: 12),
+        StreamBuilder<Cardapio?>(
+          stream: _cardapioStream,
+          builder: (context, snapshot) {
+            if (snapshot.hasError) {
+              debugPrint('ERRO CARDÁPIO: ${snapshot.error}');
+              return _avisoCardapio('Não foi possível carregar o cardápio.');
+            }
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const Padding(
+                padding: EdgeInsets.symmetric(vertical: 36),
+                child: Center(child: CircularProgressIndicator()),
+              );
+            }
+            final cardapio = snapshot.data;
+            if (cardapio == null || !cardapio.temImagem) {
+              return _avisoCardapio(
+                  'O cardápio de hoje ainda não foi publicado.');
+            }
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // O admin não enviou o cardápio de hoje ainda: mostramos o
+                // último, mas deixamos claro que é de outro dia.
+                if (!cardapio.ehDeHoje)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Text(
+                      'Cardápio publicado em '
+                      '${_dois(cardapio.atualizadoEm.day)}/'
+                      '${_dois(cardapio.atualizadoEm.month)} — ainda não foi '
+                      'atualizado hoje.',
+                      style: const TextStyle(
+                        color: Colors.orange,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
                   ),
-                );
-              },
-            ),
-          ),
-        ),
-        const SizedBox(height: 6),
-        const Text(
-          'Toque na imagem para ampliar.',
-          style: TextStyle(color: Color(0xFF999999), fontSize: 10),
+                GestureDetector(
+                  onTap: () => _abrirCardapioAmpliado(cardapio),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(22),
+                    child: Image.memory(
+                      cardapio.imagemBytes,
+                      width: double.infinity,
+                      fit: BoxFit.fitWidth,
+                      gaplessPlayback: true,
+                      errorBuilder: (context, erro, stack) {
+                        debugPrint('ERRO IMAGEM CARDÁPIO: $erro');
+                        return _avisoCardapio(
+                            'Não foi possível exibir o cardápio.');
+                      },
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                const Text(
+                  'Toque na imagem para ampliar.',
+                  style: TextStyle(color: Color(0xFF999999), fontSize: 10),
+                ),
+              ],
+            );
+          },
         ),
       ],
     );
   }
 
+  /// Caixa cinza com uma mensagem curta (cardápio ausente ou com erro).
+  Widget _avisoCardapio(String texto) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 36, horizontal: 20),
+      decoration: BoxDecoration(
+        color: Cores.fundo,
+        borderRadius: BorderRadius.circular(22),
+      ),
+      child: Text(
+        texto,
+        textAlign: TextAlign.center,
+        style: const TextStyle(color: Color(0xFF666666), fontSize: 12),
+      ),
+    );
+  }
+
   /// Abre o cardápio em tela cheia, com zoom por pinça.
-  void _abrirCardapioAmpliado() {
+  void _abrirCardapioAmpliado(Cardapio cardapio) {
     showDialog<void>(
       context: context,
       builder: (dialogContext) => Dialog(
@@ -258,7 +313,7 @@ class _InicioTabState extends State<InicioTab> {
               child: InteractiveViewer(
                 minScale: 1,
                 maxScale: 4,
-                child: Image.asset(_imagemCardapio, fit: BoxFit.contain),
+                child: Image.memory(cardapio.imagemBytes, fit: BoxFit.contain),
               ),
             ),
             IconButton(

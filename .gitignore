@@ -18,3 +18,10 @@
 *.iws
 workspace.xml
 shelf/
+
+hs_err_pid*.log
+local.properties
+caches/
+GeneratedPluginRegistrant.*
+generated_plugin_registrant.*
+generated_plugins.cmake

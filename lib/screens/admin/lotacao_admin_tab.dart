@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../../models/lotacao.dart';
 import '../../services/lotacao_service.dart';
+import 'cardapio_admin_card.dart';
 
 /// Atualização manual da lotação (decisão do grupo: sem câmera/catraca
 /// no MVP). Um funcionário/administrador informa quantas pessoas
-/// estão no RU agora.
+/// estão no RU agora. Logo abaixo, na mesma aba, fica o envio da
+/// imagem do cardápio do dia (CardapioAdminCard).
 class LotacaoAdminTab extends StatefulWidget {
   const LotacaoAdminTab({super.key});
 
@@ -83,6 +85,10 @@ class _LotacaoAdminTabState extends State<LotacaoAdminTab> {
               onPressed: _salvando ? null : _salvar,
               child: Text(_salvando ? 'Salvando...' : 'Atualizar lotação'),
             ),
+            const SizedBox(height: 24),
+            const Divider(),
+            const SizedBox(height: 8),
+            const CardapioAdminCard(),
           ],
         );
       },
