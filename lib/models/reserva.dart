@@ -58,6 +58,9 @@ class Reserva {
   final StatusReserva status;
   final DateTime criadaEm;
 
+  /// Opção vegetariana escolhida na reserva (false em reservas antigas).
+  final bool vegetariana;
+
   Reserva({
     required this.id,
     required this.usuarioId,
@@ -66,6 +69,7 @@ class Reserva {
     required this.valor,
     required this.status,
     required this.criadaEm,
+    this.vegetariana = false,
   });
 
   factory Reserva.fromMap(String id, Map<String, dynamic> map) {
@@ -77,6 +81,7 @@ class Reserva {
       valor: (map['valor'] ?? 0).toDouble(),
       status: statusReservaFromString(map['status'] ?? 'confirmada'),
       criadaEm: map['criadaEm']?.toDate() ?? DateTime.now(),
+      vegetariana: map['vegetariana'] ?? false,
     );
   }
 
@@ -88,6 +93,7 @@ class Reserva {
       'valor': valor,
       'status': statusReservaToString(status),
       'criadaEm': criadaEm,
+      'vegetariana': vegetariana,
     };
   }
 

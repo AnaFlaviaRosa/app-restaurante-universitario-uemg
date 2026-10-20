@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'firebase_options.dart';
 import 'services/auth_service.dart';
 import 'models/usuario.dart';
+import 'theme/cores.dart';
 import 'screens/auth/login_screen.dart';
 import 'screens/estudante/home_estudante_screen.dart';
 import 'screens/admin/home_admin_screen.dart';
@@ -25,8 +26,20 @@ class RUApp extends StatelessWidget {
       title: 'RU UEMG Passos',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        primarySwatch: Colors.green,
         useMaterial3: true,
+        fontFamily: 'Arial',
+        colorScheme: ColorScheme.fromSeed(seedColor: Cores.sementeTema),
+        scaffoldBackgroundColor: Cores.fundo,
+        appBarTheme: const AppBarTheme(
+          backgroundColor: Cores.verde,
+          foregroundColor: Colors.white,
+          elevation: 0,
+        ),
+        navigationBarTheme: const NavigationBarThemeData(
+          backgroundColor: Cores.barraNavegacao,
+          indicatorColor: Colors.white,
+          elevation: 0,
+        ),
       ),
       home: const PortaoDeEntrada(),
     );
@@ -57,7 +70,7 @@ class PortaoDeEntrada extends StatelessWidget {
         }
 
         return FutureBuilder<Usuario>(
-          future: authService.buscarUsuario(snapshot.data!.uid),
+          future: authService.buscarUsuarioPorUid(snapshot.data!.uid),
           builder: (context, usuarioSnap) {
             if (usuarioSnap.connectionState == ConnectionState.waiting) {
               return const Scaffold(

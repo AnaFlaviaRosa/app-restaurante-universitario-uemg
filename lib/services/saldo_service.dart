@@ -20,15 +20,25 @@ class SaldoService {
         .map((doc) => (doc.data()?['saldoAtual'] ?? 0).toDouble());
   }
 
+  /// Histórico do usuário, do mais recente para o mais antigo.
+  ///
+  /// A ordenação é feita aqui no app (e não com `orderBy` no Firestore)
+  /// porque `where('usuarioId') + orderBy('data')` exige um índice
+  /// composto criado no console do Firebase. Sem ele, a consulta falha
+  /// com `failed-precondition`. Para o volume de um MVP, ordenar no
+  /// cliente é suficiente.
   Stream<List<Movimentacao>> historicoStream(String usuarioId) {
     return _db
         .collection('movimentacoes')
         .where('usuarioId', isEqualTo: usuarioId)
-        .orderBy('data', descending: true)
         .snapshots()
-        .map((snap) => snap.docs
-            .map((d) => Movimentacao.fromMap(d.id, d.data()))
-            .toList());
+        .map((snap) {
+      final lista = snap.docs
+          .map((d) => Movimentacao.fromMap(d.id, d.data()))
+          .toList();
+      lista.sort((a, b) => b.data.compareTo(a.data));
+      return lista;
+    });
   }
 
   /// Simula uma recarga: cria a movimentação já como "aprovada" e
@@ -37,6 +47,7 @@ class SaldoService {
   Future<void> simularRecarga({
     required String usuarioId,
     required double valor,
+    String? metodo, // 'pix' ou 'cartao' (apenas informativo no MVP)
   }) async {
     if (valor <= 0) {
       throw Exception('O valor da recarga precisa ser maior que zero.');
@@ -57,6 +68,7 @@ class SaldoService {
         'status': 'aprovada',
         'data': DateTime.now(),
         'reservaId': null,
+        'metodo': metodo,
       });
     });
   }
