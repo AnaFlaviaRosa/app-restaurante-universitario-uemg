@@ -1,7 +1,9 @@
 import 'dart:convert';
+import 'dart:typed_data';
+import 'package:file_picker/file_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
+import 'package:flutter_image_compress/flutter_image_compress.dart';
 import '../../models/cardapio.dart';
 import '../../services/cardapio_service.dart';
 
@@ -15,8 +17,9 @@ import '../../services/cardapio_service.dart';
 /// quem não é admin (ver firestore.rules).
 ///
 /// Fluxo:
-/// 1. `image_picker` abre a galeria e já devolve a imagem reduzida
-///    (maxWidth) e recomprimida (imageQuality) — sem pacote extra.
+/// 1. `file_picker` abre o seletor de arquivos do sistema (permite escolher
+///    de qualquer pasta, como Downloads) e `flutter_image_compress` reduz
+///    (largura 1200) e recomprime (qualidade 70) a imagem escolhida.
 /// 2. Se já existe um cardápio, o app pede confirmação: a troca apaga o
 ///    anterior (não há histórico).
 /// 3. Os bytes viram Base64 e substituem o documento cardapios/atual.
@@ -29,7 +32,6 @@ class CardapioAdminCard extends StatefulWidget {
 
 class _CardapioAdminCardState extends State<CardapioAdminCard> {
   final _cardapioService = CardapioService();
-  final _picker = ImagePicker();
   late final Stream<Cardapio?> _cardapioStream;
 
   bool _enviando = false;
@@ -75,29 +77,39 @@ class _CardapioAdminCardState extends State<CardapioAdminCard> {
   }
 
   Future<void> _trocarImagem({required bool jaTemCardapio}) async {
-    XFile? arquivo;
+    String? caminho;
     try {
-      arquivo = await _picker.pickImage(
-        source: ImageSource.gallery,
-        // Reduz e recomprime NA HORA DA ESCOLHA: é isso que mantém o
-        // arquivo pequeno o bastante para caber em um documento do
-        // Firestore (ver kTamanhoMaximoBase64).
-        maxWidth: 1200,
-        imageQuality: 70,
+      final resultado = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['jpg', 'jpeg', 'png', 'webp'],
       );
+      caminho = resultado?.files.single.path;
     } catch (e) {
-      debugPrint('ERRO AO ABRIR GALERIA: $e');
-      _aviso('Não foi possível abrir a galeria.');
+      debugPrint('ERRO AO ABRIR SELETOR: $e');
+      _aviso('Não foi possível abrir o seletor de arquivos.');
       return;
     }
-    if (arquivo == null) return; // cancelou a escolha
+    if (caminho == null) return; // cancelou a escolha
 
     if (jaTemCardapio && !await _confirmarSubstituicao()) return;
     if (!mounted) return;
 
     setState(() => _enviando = true);
     try {
-      final bytes = await arquivo.readAsBytes();
+      // Reduz e recomprime para caber em um documento do Firestore
+      // (ver kTamanhoMaximoBase64).
+      final Uint8List? bytes = await FlutterImageCompress.compressWithFile(
+        caminho,
+        minWidth: 1200,
+        minHeight: 1200,
+        quality: 70,
+        format: CompressFormat.jpeg,
+      );
+      if (bytes == null) {
+        _aviso('Não foi possível processar a imagem.');
+        return;
+      }
+
       await _cardapioService.publicarCardapio(
         imagemBase64: base64Encode(bytes),
         adminId: FirebaseAuth.instance.currentUser!.uid,
@@ -128,7 +140,7 @@ class _CardapioAdminCardState extends State<CardapioAdminCard> {
             const SizedBox(height: 4),
             const Text(
               'Uma imagem para almoço e janta. Ao enviar uma nova, a anterior '
-              'é apagada — só o cardápio mais recente fica salvo.',
+                  'é apagada — só o cardápio mais recente fica salvo.',
               style: TextStyle(color: Colors.black54, fontSize: 12),
             ),
             const SizedBox(height: 12),
@@ -142,7 +154,7 @@ class _CardapioAdminCardState extends State<CardapioAdminCard> {
                 final dados = snapshot.data;
                 // `cardapio` só existe quando há uma imagem válida salva.
                 final cardapio =
-                    (dados != null && dados.temImagem) ? dados : null;
+                (dados != null && dados.temImagem) ? dados : null;
                 final temCardapio = cardapio != null;
 
                 return Column(
@@ -192,8 +204,8 @@ class _CardapioAdminCardState extends State<CardapioAdminCard> {
                         _enviando
                             ? 'Enviando...'
                             : temCardapio
-                                ? 'Trocar imagem'
-                                : 'Adicionar imagem',
+                            ? 'Trocar imagem'
+                            : 'Adicionar imagem',
                       ),
                     ),
                   ],
