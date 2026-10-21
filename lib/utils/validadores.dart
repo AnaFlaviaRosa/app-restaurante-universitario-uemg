@@ -51,3 +51,8 @@ String formatarCpf(String cpf) {
   return '${limpo.substring(0, 3)}.${limpo.substring(3, 6)}.'
       '${limpo.substring(6, 9)}-${limpo.substring(9, 11)}';
 }
+
+/// Validação simples de formato de e-mail (algo@dominio.ext, sem
+/// espaços). Não confirma que o e-mail existe — só que está bem escrito.
+bool emailValido(String email) =>
+    RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(email.trim());

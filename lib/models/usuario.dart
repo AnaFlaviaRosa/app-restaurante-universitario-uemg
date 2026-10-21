@@ -68,6 +68,21 @@ class Usuario {
   bool get isAdmin => tipo == TipoUsuario.admin;
   bool get isEstudante => tipo == TipoUsuario.estudante;
 
+  /// Cópia do usuário trocando só o que mudou (usado pela aba Perfil
+  /// quando a pessoa edita o nome ou o e-mail).
+  Usuario copyWith({String? nome, String? email}) {
+    return Usuario(
+      id: id,
+      cpf: cpf,
+      nome: nome ?? this.nome,
+      email: email ?? this.email,
+      tipo: tipo,
+      matricula: matricula,
+      saldoAtual: saldoAtual,
+      criadoEm: criadoEm,
+    );
+  }
+
   factory Usuario.fromMap(String id, Map<String, dynamic> map) {
     return Usuario(
       id: id,

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/usuario.dart';
@@ -153,12 +154,92 @@ class AuthService {
 
   /// Busca o documento usuarios/{uid} diretamente — não precisa mais
   /// de nenhuma "tradução" (o uid do Auth já É o id do documento).
+  ///
+  /// Também mantém o e-mail do documento igual ao e-mail do Firebase
+  /// Auth: quando a pessoa troca o e-mail pelo Perfil, o Auth só muda
+  /// depois que ela confirma o link enviado ao novo endereço; na
+  /// próxima leitura (login / abrir o app / abrir a aba Perfil) o
+  /// documento é atualizado aqui.
   Future<Usuario> buscarUsuarioPorUid(String uid) async {
     final doc = await _db.collection('usuarios').doc(uid).get();
     if (!doc.exists) {
       throw Exception('Usuário não encontrado no banco de dados.');
     }
-    return Usuario.fromMap(doc.id, doc.data()!);
+    var usuario = Usuario.fromMap(doc.id, doc.data()!);
+
+    final atual = _auth.currentUser;
+    final emailAuth = atual?.email;
+    if (atual != null &&
+        atual.uid == uid &&
+        emailAuth != null &&
+        emailAuth.toLowerCase() != usuario.email.toLowerCase()) {
+      try {
+        await doc.reference.update({'email': emailAuth});
+        usuario = usuario.copyWith(email: emailAuth);
+      } catch (e) {
+        // Não impede o login se essa sincronização falhar.
+        debugPrint('ERRO AO SINCRONIZAR E-MAIL: $e');
+      }
+    }
+    return usuario;
+  }
+
+  /// Relê o usuário logado no Auth (para pegar um e-mail recém
+  /// confirmado) e devolve o documento atualizado.
+  Future<Usuario> recarregarUsuario(String uid) async {
+    try {
+      await _auth.currentUser?.reload();
+    } catch (e) {
+      debugPrint('ERRO AO RECARREGAR USUÁRIO: $e');
+    }
+    return buscarUsuarioPorUid(uid);
+  }
+
+  // ---------- Perfil ----------
+
+  /// Confirma a identidade com a senha atual. O Firebase exige um login
+  /// recente para trocar e-mail ou senha.
+  Future<void> _reautenticar(String senhaAtual) async {
+    final user = _auth.currentUser;
+    final email = user?.email;
+    if (user == null || email == null) {
+      throw FirebaseAuthException(code: 'requires-recent-login');
+    }
+    final credencial = EmailAuthProvider.credential(
+      email: email,
+      password: senhaAtual,
+    );
+    await user.reauthenticateWithCredential(credencial);
+  }
+
+  /// Atualiza o nome no documento do usuário.
+  Future<Usuario> atualizarNome(Usuario usuario, String novoNome) async {
+    await _db
+        .collection('usuarios')
+        .doc(usuario.id)
+        .update({'nome': novoNome});
+    return usuario.copyWith(nome: novoNome);
+  }
+
+  /// Pede a troca de e-mail. O Firebase envia um link de confirmação
+  /// para o NOVO endereço e só troca o e-mail de login depois que a
+  /// pessoa clica nele (por isso não alteramos `usuarios.email` aqui —
+  /// ver buscarUsuarioPorUid).
+  Future<void> solicitarAlteracaoEmail({
+    required String senhaAtual,
+    required String novoEmail,
+  }) async {
+    await _reautenticar(senhaAtual);
+    await _auth.currentUser!.verifyBeforeUpdateEmail(novoEmail);
+  }
+
+  /// Troca a senha (exige a senha atual).
+  Future<void> alterarSenha({
+    required String senhaAtual,
+    required String novaSenha,
+  }) async {
+    await _reautenticar(senhaAtual);
+    await _auth.currentUser!.updatePassword(novaSenha);
   }
 
   Future<void> logout() => _auth.signOut();
