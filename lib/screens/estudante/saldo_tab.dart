@@ -3,6 +3,8 @@ import '../../models/usuario.dart';
 import '../../models/movimentacao.dart';
 import '../../services/saldo_service.dart';
 import '../../theme/cores.dart';
+import 'recarga/recarga_cartao_screen.dart';
+import 'recarga/recarga_pix_screen.dart';
 
 /// Fluxo C definido pelo grupo: ver saldo, recarregar e ver histórico.
 ///
@@ -103,7 +105,9 @@ class _SaldoTabState extends State<SaldoTab> {
     final base = m.metodo == 'pix'
         ? 'TRANSFERENCIA PIX.'
         : m.metodo == 'cartao'
-            ? 'DEPÓSITO CARTÃO DEB.'
+            ? (m.detalhe != null
+                ? 'CARTÃO ${m.detalhe!.toUpperCase()}'
+                : 'DEPÓSITO CARTÃO DEB.')
             : 'RECARGA DE SALDO';
     final sufixo = switch (m.status) {
       StatusMovimentacao.aprovada => '',
@@ -115,63 +119,18 @@ class _SaldoTabState extends State<SaldoTab> {
 
   // ---------- recarga ----------
 
+  /// Abre o fluxo de recarga (Pix ou cartão). A tela de pagamento cuida
+  /// de tudo e, ao final, mostra o comprovante; o saldo e o histórico
+  /// aqui se atualizam sozinhos (são streams do Firestore).
   Future<void> _abrirDialogoRecarga({required bool pix}) async {
-    _valorController.clear();
-    final valor = await showDialog<double>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(pix ? 'Recarga via PIX' : 'Recarga via cartão'),
-        content: TextField(
-          controller: _valorController,
-          autofocus: true,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: const InputDecoration(
-            labelText: 'Valor da recarga',
-            prefixText: 'R\$ ',
-            border: OutlineInputBorder(),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('CANCELAR'),
-          ),
-          FilledButton(
-            onPressed: () {
-              final v = double.tryParse(
-                _valorController.text.replaceAll(',', '.'),
-              );
-              if (v == null || v <= 0) return;
-              Navigator.pop(dialogContext, v);
-            },
-            child: const Text('CONFIRMAR'),
-          ),
-        ],
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => pix
+            ? RecargaPixScreen(usuario: widget.usuario)
+            : RecargaCartaoScreen(usuario: widget.usuario),
       ),
     );
-
-    if (valor == null || !mounted) return;
-
-    setState(() => _recarregando = true);
-    try {
-      await _saldoService.simularRecarga(
-        usuarioId: widget.usuario.id,
-        valor: valor,
-        metodo: pix ? 'pix' : 'cartao',
-      );
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Recarga de ${_dinheiro(valor)} realizada!')),
-      );
-    } catch (e) {
-      debugPrint('ERRO RECARGA: $e');
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Não foi possível concluir a recarga.')),
-      );
-    } finally {
-      if (mounted) setState(() => _recarregando = false);
-    }
   }
 
   // ---------- build ----------
@@ -452,6 +411,7 @@ class _SaldoTabState extends State<SaldoTab> {
   }
 
   Widget _itemHistorico(Movimentacao m) {
+    final recusada = m.status == StatusMovimentacao.recusada;
     final entrada = m.tipo != TipoMovimentacao.consumo;
     return Row(
       children: [
@@ -459,11 +419,19 @@ class _SaldoTabState extends State<SaldoTab> {
           width: 44,
           height: 44,
           decoration: BoxDecoration(
-            color: entrada ? Cores.verdeVivo : Cores.vermelho,
+            color: recusada
+                ? const Color(0xFFB9B9B9)
+                : entrada
+                    ? Cores.verdeVivo
+                    : Cores.vermelho,
             borderRadius: BorderRadius.circular(8),
           ),
           child: Icon(
-            entrada ? Icons.arrow_downward : Icons.arrow_upward,
+            recusada
+                ? Icons.close
+                : entrada
+                    ? Icons.arrow_downward
+                    : Icons.arrow_upward,
             color: Colors.white,
             size: 22,
           ),
@@ -493,10 +461,11 @@ class _SaldoTabState extends State<SaldoTab> {
         ),
         Text(
           '${entrada ? '' : '- '}${_dinheiro(m.valor)}',
-          style: const TextStyle(
-            color: Colors.black,
+          style: TextStyle(
+            color: recusada ? const Color(0xFFB9B9B9) : Colors.black,
             fontSize: 13,
             fontWeight: FontWeight.w400,
+            decoration: recusada ? TextDecoration.lineThrough : null,
           ),
         ),
       ],

@@ -48,6 +48,14 @@ class Movimentacao {
   /// movimentações antigas e em consumo/estorno.
   final String? metodo;
 
+  /// Identificador da transação de pagamento (ID Pix ou código de
+  /// autorização do cartão). Nulo em movimentações antigas.
+  final String? transacaoId;
+
+  /// Resumo do meio de pagamento, ex.: "Crédito Visa •••• 4242".
+  /// (Nunca guarda o número completo do cartão nem o CVV.)
+  final String? detalhe;
+
   Movimentacao({
     required this.id,
     required this.usuarioId,
@@ -57,6 +65,8 @@ class Movimentacao {
     required this.data,
     this.reservaId,
     this.metodo,
+    this.transacaoId,
+    this.detalhe,
   });
 
   factory Movimentacao.fromMap(String id, Map<String, dynamic> map) {
@@ -69,6 +79,8 @@ class Movimentacao {
       data: map['data']?.toDate() ?? DateTime.now(),
       reservaId: map['reservaId'],
       metodo: map['metodo'],
+      transacaoId: map['transacaoId'],
+      detalhe: map['detalhe'],
     );
   }
 
@@ -81,6 +93,8 @@ class Movimentacao {
       'data': data,
       'reservaId': reservaId,
       'metodo': metodo,
+      'transacaoId': transacaoId,
+      'detalhe': detalhe,
     };
   }
 }
