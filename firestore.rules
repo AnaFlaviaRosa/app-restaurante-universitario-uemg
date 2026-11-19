@@ -157,6 +157,43 @@ service cloud.firestore {
       allow write: if souAdmin();
     }
 
+    // Catracas autorizadas: `catracas/{uid}` existe só para a conta de
+    // serviço da catraca (criada no Firebase Auth). Só o Console
+    // escreve aqui (o cliente nunca), então ninguém consegue se
+    // "promover" a catraca pelo app.
+    match /catracas/{uid} {
+      allow read: if false;
+      allow write: if false;
+    }
+
+    function souCatraca() {
+      return estaLogado() &&
+        exists(/databases/$(database)/documents/catracas/$(request.auth.uid));
+    }
+
+    // Eventos de entrada (um por passagem na catraca): { ts, tipo,
+    // origem }. Sem dado pessoal, só o horário. Leitura para logados
+    // (o app conta por janela). Cria: catraca ou admin (teste), com
+    // horário dentro de 2 min do relógio do servidor (impede
+    // "retroagir" contagens). Nunca edita; só admin apaga (limpeza).
+    match /lotacao_eventos/{id} {
+      allow read: if estaLogado();
+      allow create: if
+        request.resource.data.keys().hasOnly(['ts', 'tipo', 'origem', 'expireAt']) &&
+        request.resource.data.tipo == 'entrada' &&
+        request.resource.data.ts is timestamp &&
+        request.resource.data.ts <= request.time + duration.value(1, 'm') && (
+          // Catraca ou admin: horário dentro de 2 min do servidor.
+          ((souCatraca() || souAdmin()) &&
+           request.resource.data.ts > request.time - duration.value(2, 'm')) ||
+          // Só admin, só para SIMULAÇÃO: pode usar horários das últimas 3 h.
+          (souAdmin() && request.resource.data.origem == 'simulacao' &&
+           request.resource.data.ts > request.time - duration.value(3, 'h'))
+        );
+      allow update: if false;
+      allow delete: if souAdmin();
+    }
+
     // Configurações (horários das refeições, preços por tipo de
     // usuário): leitura pública para logados; só admin edita.
     match /config/{id} {

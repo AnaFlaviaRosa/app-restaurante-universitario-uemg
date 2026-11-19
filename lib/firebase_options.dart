@@ -1,5 +1,4 @@
-// ATENÇÃO: este arquivo é um placeholder.
-//
+  //
 // Ele deve ser gerado automaticamente pela ferramenta oficial do
 // FlutterFire, depois que vocês criarem o projeto no Firebase Console.
 //

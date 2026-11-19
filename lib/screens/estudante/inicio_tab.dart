@@ -5,6 +5,7 @@ import '../../models/lotacao.dart';
 import '../../services/cardapio_service.dart';
 import '../../services/lotacao_service.dart';
 import '../../theme/cores.dart';
+import '../../widgets/lotacao_janela.dart';
 
 /// Fluxo A definido pelo grupo: "descobrir se vale a pena ir ao RU agora".
 ///
@@ -47,19 +48,6 @@ class _InicioTabState extends State<InicioTab> {
 
   /// Ex.: "11h15"
   String _horaFormatada(DateTime d) => '${_dois(d.hour)}h${_dois(d.minute)}';
-
-  Color _corStatus(String status) {
-    switch (status) {
-      case 'Baixo movimento':
-        return Cores.verdeVivo;
-      case 'Médio movimento':
-        return Colors.orange;
-      case 'Alta ocupação':
-        return Cores.vermelho;
-      default:
-        return Colors.grey;
-    }
-  }
 
   // ---------- build ----------
 
@@ -169,33 +157,20 @@ class _InicioTabState extends State<InicioTab> {
         if (lotacao == null) {
           return const Text('LOTAÇÃO: sem informação ainda.', style: estilo);
         }
-        final cor = _corStatus(lotacao.statusTexto);
+        // Modo catraca: estimativa + seletor de janela (5 min, 10 min...).
+        if (lotacao.usaCatraca) return LotacaoJanela(lotacao: lotacao);
+        // Modo manual: mesmo visual do medidor, com o valor do admin.
+        // Os botões de período (5, 10, 30 min, 1 h) aparecem sempre.
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'LOTAÇÃO: ${lotacao.quantidadeAtual}/${lotacao.capacidadeMaxima}',
-              style: estilo,
+            MedidorLotacao(
+              quantidade: lotacao.quantidadeAtual,
+              capacidade: lotacao.capacidadeMaxima,
+              atualizadoEm: lotacao.atualizadoEm,
             ),
-            Text(
-              'ÚLTIMA ATUALIZAÇÃO: ${_horaFormatada(lotacao.atualizadoEm)}',
-              style: estilo,
-            ),
-            const SizedBox(height: 6),
-            Row(
-              children: [
-                Icon(Icons.circle, size: 10, color: cor),
-                const SizedBox(width: 6),
-                Text(
-                  lotacao.statusTexto,
-                  style: TextStyle(
-                    color: cor,
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
+            const SizedBox(height: 18),
+            const SeletorJanelasLotacao(),
           ],
         );
       },
