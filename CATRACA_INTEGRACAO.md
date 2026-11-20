@@ -80,3 +80,72 @@ Qualquer erro aparece na tela. "Sem permissão" = publique o
 `firestore.rules` atualizado e confirme que o usuário é admin.
 O horário no passado só é aceito para admin e origem `simulacao`
 (até 3 h); a catraca real continua limitada a 2 min do relógio do servidor.
+
+
+---
+
+# Baixa de saldo e liberação de reserva (ponte da catraca)
+
+A catraca atende dois grupos pelo MESMO bip: quem **come no local** e quem
+**retira marmita** (já reservada e paga). A ponte (`ponte_catraca/ponte.py`)
+decide pela reserva:
+
+| Situação do bip | O que a ponte faz | Lotação |
+|---|---|---|
+| Tem reserva `confirmada` desta refeição | reserva vira `liberada` (não cobra) | **não conta** |
+| Reserva já `liberada`/`utilizada`/`naoRetirada` | nada (não cobra) | não conta |
+| Sem reserva (ou reserva cancelada) | debita o preço do tipo + `movimentacoes` (consumo) + entrada em `lotacao_eventos` + `passagens` — **um commit atômico** | conta |
+| 2ª passagem na mesma refeição | nada (não cobra de novo) | não conta |
+| Fora do horário das refeições / usuário não encontrado | nada | não conta |
+
+> Por isso o log `lotacao_eventos` só recebe quem fica no restaurante: quem
+> retira marmita nunca entra nele (não precisa campo "modalidade").
+
+## Como o aluno é identificado
+O sistema facial atual reconhece a pessoa; a ponte recebe só um
+**identificador** (matrícula ou CPF — `campo_identificador` no
+`config.json`) e procura `usuarios` por esse campo. Nenhuma imagem passa
+pelo app. Confirme com o fornecedor **qual identificador o evento traz**.
+
+## Instalação da ponte
+1. No Console do Firebase, crie um usuário (Authentication → e-mail/senha)
+   para a catraca e anote o UID.
+2. No Firestore, crie o documento `catracas/{UID}` (pode ter qualquer campo).
+3. No computador da catraca: copie `ponte_catraca/`, renomeie
+   `config.exemplo.json` para `config.json` e preencha (**não versionar**).
+4. `python3 ponte.py servir --config config.json` abre um webhook em
+   `http://127.0.0.1:8099/passagem`. O sistema da catraca faz:
+   ```
+   POST /passagem   (cabeçalho X-Token: <token_webhook>)
+   {"id": "ID-UNICO-DO-EVENTO", "identificador": "123456"}
+   ```
+   Resposta: `{"resultado": "refeicao_no_local_cobrada" | "reserva_liberada" | ...}`.
+   Se a catraca só gera log/MQTT/arquivo, escreva um adaptador que chame
+   `Ponte.processar(id, identificador)` (a lógica não depende do webhook).
+5. Teste sem hardware: `python3 ponte.py simular --config config.json --id t1 --identificador 123456`.
+6. Testes automáticos da ponte: `cd ponte_catraca && python3 -m unittest -v test_ponte`.
+
+## Segurança e cuidados
+- A conta da catraca **lê `usuarios`** (precisa localizar por matrícula/CPF) e
+  só consegue: marcar reserva `confirmada → liberada`; **diminuir** saldo em
+  até o preço do tipo; criar `movimentacoes` de consumo, `passagens` e
+  `lotacao_eventos`. Guarde `config.json` com cuidado e troque a senha se
+  vazar. Mantenha o webhook em `127.0.0.1` (ou atrás de rede interna/HTTPS).
+- **Idempotência:** o ID do evento vira ID de `movimentacoes/catraca_<id>` e
+  `lotacao_eventos/<id>`; reenviar o mesmo evento é recusado (`ja_processado`).
+- **Sem internet:** a ponte guarda o evento em `fila_pendente.jsonl` e
+  `python3 ponte.py reenviar` reprocessa em ordem. Eventos atrasados são
+  registrados com a hora do servidor (hora do reenvio).
+- **Limite das regras:** um commit por passagem usa ~12 das 20 chamadas
+  `get/exists` permitidas por lote; não acrescente outras escritas no mesmo
+  commit sem recontar.
+- **Saldo insuficiente:** `permitir_saldo_negativo: true` (padrão) debita
+  mesmo assim (saldo pode ficar negativo; o app só bloqueia novas reservas).
+  Com `false`, não debita, mas conta a entrada. A ponte **não abre nem fecha**
+  a catraca: se o sistema atual decide a liberação, ele continua decidindo.
+- **Duas fontes de saldo:** o sistema atual do RU precisa **deixar de debitar**
+  a mesma passagem (ou o aluno paga duas vezes).
+- **Ligar a integração** (aba Configurações do admin) só quando a ponte
+  estiver funcionando; se ela cair, **desligue** para os alunos poderem abrir
+  o protocolo direto da reserva.
+- Ativar TTL em `passagens.expireAt` (junto com `lotacao_eventos.expireAt`).

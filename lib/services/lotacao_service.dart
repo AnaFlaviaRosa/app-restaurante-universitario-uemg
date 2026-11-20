@@ -13,6 +13,23 @@ import '../models/lotacao.dart';
 class LotacaoService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
 
+  /// As regras do Firestore limitam 20 chamadas exists()/get() por lote, e
+  /// cada escrita de evento do admin gasta até 5 (checagem de admin/catraca
+  /// nas duas alternativas da regra). Por isso os lotes de teste são
+  /// pequenos: 3 escritas por commit.
+  static const int _escritasPorLote = 3;
+
+  Future<void> _gravarEmLotes(
+      List<void Function(WriteBatch)> operacoes) async {
+    for (var i = 0; i < operacoes.length; i += _escritasPorLote) {
+      final batch = _db.batch();
+      for (final op in operacoes.skip(i).take(_escritasPorLote)) {
+        op(batch);
+      }
+      await batch.commit();
+    }
+  }
+
   Stream<Lotacao?> lotacaoStream() {
     return _db.collection('lotacao').doc('atual').snapshots().map(
         (doc) => doc.exists ? Lotacao.fromMap(doc.data()!) : null);
@@ -73,7 +90,8 @@ class LotacaoService {
   /// SIMULAÇÃO (admin): cria [total] entradas com horários espalhados
   /// nos últimos [ultimosMin] minutos, marcadas com origem 'simulacao'.
   /// Serve para testar os botões de período sem a catraca de verdade.
-  /// Máximo de 400 por vez (limite de 500 gravações por lote).
+  /// Máximo de 400 por vez; gravadas em lotes pequenos (ver
+  /// [_escritasPorLote]).
   Future<void> simularMovimento({
     required int total,
     required int ultimosMin,
@@ -81,37 +99,41 @@ class LotacaoService {
     final n = total.clamp(1, 400);
     final agora = DateTime.now();
     final aleatorio = math.Random();
-    final batch = _db.batch();
     final expira =
         Timestamp.fromDate(agora.add(const Duration(days: 30)));
+    final operacoes = <void Function(WriteBatch)>[];
     for (var i = 0; i < n; i++) {
       // Horário aleatório entre "agora" e "agora - ultimosMin".
       final segundos = aleatorio.nextInt(ultimosMin * 60);
-      batch.set(_db.collection('lotacao_eventos').doc(), {
+      final ref = _db.collection('lotacao_eventos').doc();
+      final dados = {
         'ts': Timestamp.fromDate(agora.subtract(Duration(seconds: segundos))),
         'tipo': 'entrada',
         'origem': 'simulacao',
         'expireAt': expira,
-      });
+      };
+      operacoes.add((b) => b.set(ref, dados));
     }
-    await batch.commit();
+    await _gravarEmLotes(operacoes);
   }
 
   /// Registra várias entradas AGORA de uma vez (ex.: botão "+10").
   Future<void> registrarEntradas(int quantidade,
       {String origem = 'manual'}) async {
-    final batch = _db.batch();
     final expira = Timestamp.fromDate(
         DateTime.now().add(const Duration(days: 30)));
+    final operacoes = <void Function(WriteBatch)>[];
     for (var i = 0; i < quantidade.clamp(1, 400); i++) {
-      batch.set(_db.collection('lotacao_eventos').doc(), {
+      final ref = _db.collection('lotacao_eventos').doc();
+      final dados = {
         'ts': FieldValue.serverTimestamp(),
         'tipo': 'entrada',
         'origem': origem,
         'expireAt': expira,
-      });
+      };
+      operacoes.add((b) => b.set(ref, dados));
     }
-    await batch.commit();
+    await _gravarEmLotes(operacoes);
   }
 
   /// Apaga os eventos de simulação (origem == 'simulacao'). Devolve
@@ -122,14 +144,12 @@ class LotacaoService {
       final lote = await _db
           .collection('lotacao_eventos')
           .where('origem', isEqualTo: 'simulacao')
-          .limit(400)
+          .limit(60)
           .get();
       if (lote.docs.isEmpty) break;
-      final batch = _db.batch();
-      for (final d in lote.docs) {
-        batch.delete(d.reference);
-      }
-      await batch.commit();
+      await _gravarEmLotes([
+        for (final d in lote.docs) (WriteBatch b) => b.delete(d.reference),
+      ]);
       apagados += lote.docs.length;
     }
     return apagados;

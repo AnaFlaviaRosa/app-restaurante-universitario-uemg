@@ -26,6 +26,18 @@ Color _corDoStatus(String status) {
 String _dois(int n) => n.toString().padLeft(2, '0');
 String _hora(DateTime d) => '${_dois(d.hour)}h${_dois(d.minute)}';
 
+/// "Atualizado às 11h05" se for de hoje; com a data se for de outro dia
+/// ("Atualizado em 18/11 às 11h05"), para não passar a impressão de que
+/// um dado antigo é de agora.
+String _textoAtualizado(DateTime d) {
+  final agora = DateTime.now();
+  final ehHoje =
+      d.year == agora.year && d.month == agora.month && d.day == agora.day;
+  return ehHoje
+      ? 'Atualizado às ${_hora(d)}'
+      : 'Atualizado em ${_dois(d.day)}/${_dois(d.month)} às ${_hora(d)}';
+}
+
 /// Cartão visual da lotação: medidor circular colorido, número grande,
 /// situação ("Baixo movimento"...) e horário da atualização.
 /// Usado nos dois modos (manual e catraca) para manter o mesmo visual.
@@ -176,7 +188,7 @@ class MedidorLotacao extends StatelessWidget {
                               size: 13, color: Color(0xFF666666)),
                           const SizedBox(width: 4),
                           Text(
-                            'Atualizado às ${_hora(atualizadoEm!)}',
+                            _textoAtualizado(atualizadoEm!),
                             style: const TextStyle(
                                 color: Color(0xFF666666), fontSize: 11),
                           ),

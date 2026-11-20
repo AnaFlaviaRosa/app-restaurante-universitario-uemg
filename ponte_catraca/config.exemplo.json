@@ -1,0 +1,12 @@
+{
+  "project_id": "SEU-PROJETO-FIREBASE",
+  "api_key": "A chave Web do app (Console > Configurações do projeto)",
+  "email": "catraca@seu-dominio.exemplo",
+  "senha": "senha-forte-da-conta-da-catraca",
+  "campo_identificador": "matricula",
+  "permitir_saldo_negativo": true,
+  "token_webhook": "um-segredo-longo-que-so-o-sistema-da-catraca-conhece",
+  "host": "127.0.0.1",
+  "porta": 8099,
+  "arquivo_fila": "fila_pendente.jsonl"
+}

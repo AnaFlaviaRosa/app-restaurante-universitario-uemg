@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../services/auth_service.dart';
+import '../../utils/validadores.dart';
 import '../../widgets/auth_layout.dart';
 import 'escolha_tipo_cadastro_screen.dart';
 
@@ -106,7 +107,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 rotulo: 'Email',
                 keyboardType: TextInputType.emailAddress,
                 validator: (v) =>
-                (v == null || !v.contains('@')) ? 'E-mail inválido' : null,
+                (v == null || !emailValido(v)) ? 'E-mail inválido' : null,
               ),
               const SizedBox(height: 14),
               AuthCampo(

@@ -86,7 +86,7 @@ class _CadastroComumScreenState extends State<CadastroComumScreen> {
                 rotulo: 'Email',
                 keyboardType: TextInputType.emailAddress,
                 validator: (v) =>
-                (v == null || !v.contains('@')) ? 'E-mail inválido' : null,
+                (v == null || !emailValido(v)) ? 'E-mail inválido' : null,
               ),
               const SizedBox(height: 14),
               AuthCampo(
