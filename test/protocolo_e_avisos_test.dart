@@ -98,7 +98,8 @@ void main() {
     test('expira e nunca fica negativo', () {
       final r = _reserva(
           status: StatusReserva.utilizada, protocoloAbertoEm: aberto);
-      final depois = aberto.add(Duration(seconds: duracaoProtocoloSegundos));
+      final depois =
+      aberto.add(const Duration(seconds: duracaoProtocoloSegundos));
       expect(r.protocoloSegundosRestantes(depois), 0);
       expect(r.protocoloValido(depois), isFalse);
       expect(r.protocoloSegundosRestantes(depois.add(const Duration(hours: 1))), 0);

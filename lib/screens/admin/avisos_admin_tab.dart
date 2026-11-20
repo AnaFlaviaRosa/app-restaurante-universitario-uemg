@@ -119,11 +119,11 @@ class _AvisosAdminTabState extends State<AvisosAdminTab> {
           title: const Text('Fechar o RU hoje?'),
           content: Text(
             'Isto vai:\n'
-            '• bloquear novas reservas de hoje;\n'
-            '• zerar a quantidade de marmitas de hoje;\n'
-            '• publicar um aviso importante para todos;\n'
-            '• CANCELAR e ESTORNAR $n reserva(s) confirmada(s) de hoje.\n\n'
-            'Reservas já liberadas na catraca ou retiradas não são alteradas.',
+                '• bloquear novas reservas de hoje;\n'
+                '• zerar a quantidade de marmitas de hoje;\n'
+                '• publicar um aviso importante para todos;\n'
+                '• CANCELAR e ESTORNAR $n reserva(s) confirmada(s) de hoje.\n\n'
+                'Reservas já liberadas na catraca ou retiradas não são alteradas.',
           ),
           actions: [
             TextButton(
@@ -194,7 +194,7 @@ class _AvisosAdminTabState extends State<AvisosAdminTab> {
               children: [
                 const Text('RU fechado hoje',
                     style:
-                        TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                    TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 4),
                 if (fechado) ...[
                   Text(
@@ -211,8 +211,8 @@ class _AvisosAdminTabState extends State<AvisosAdminTab> {
                 ] else ...[
                   const Text(
                     'Para dias em que o RU não abrirá. Bloqueia reservas, '
-                    'zera as marmitas, estorna as reservas confirmadas e '
-                    'avisa todo mundo.',
+                        'zera as marmitas, estorna as reservas confirmadas e '
+                        'avisa todo mundo.',
                     style: TextStyle(color: Colors.black54, fontSize: 12),
                   ),
                   const SizedBox(height: 10),
@@ -276,7 +276,7 @@ class _AvisosAdminTabState extends State<AvisosAdminTab> {
               onChanged: (v) => setState(() => _importante = v),
             ),
             DropdownButtonFormField<int>(
-              value: _validadeIndice,
+              initialValue: _validadeIndice,
               decoration: const InputDecoration(
                 labelText: 'Fica no ar',
                 border: OutlineInputBorder(),
