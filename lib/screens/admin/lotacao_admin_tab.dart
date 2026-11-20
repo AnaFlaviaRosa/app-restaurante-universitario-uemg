@@ -32,12 +32,29 @@ class _LotacaoAdminTabState extends State<LotacaoAdminTab> {
   final Map<int, int> _contagens = {};
 
   Future<void> _salvar() async {
-    final quantidade = int.tryParse(_quantidadeController.text) ?? 0;
-    final capacidade = int.tryParse(_capacidadeController.text);
-    final permanencia = int.tryParse(_permanenciaController.text);
-    if (capacidade == null || permanencia == null || permanencia <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('Confira a capacidade e a permanência média.')));
+    final textoQuantidade = _quantidadeController.text.trim();
+    final quantidade =
+        textoQuantidade.isEmpty ? 0 : int.tryParse(textoQuantidade);
+    final capacidade = int.tryParse(_capacidadeController.text.trim());
+    final permanencia = int.tryParse(_permanenciaController.text.trim());
+
+    void avisar(String texto) => ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(texto)));
+
+    if (quantidade == null || quantidade < 0) {
+      avisar('A quantidade de pessoas precisa ser um número maior ou igual a 0.');
+      return;
+    }
+    if (capacidade == null || capacidade <= 0) {
+      avisar('A capacidade precisa ser um número maior que 0.');
+      return;
+    }
+    if (permanencia == null || permanencia < 1 || permanencia > 240) {
+      avisar('A permanência média precisa estar entre 1 e 240 minutos.');
+      return;
+    }
+    if (!_usaCatraca && quantidade > capacidade) {
+      avisar('A quantidade de pessoas não pode passar da capacidade.');
       return;
     }
 

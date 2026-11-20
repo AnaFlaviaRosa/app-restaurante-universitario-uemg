@@ -28,8 +28,12 @@ class _DisponibilidadeAdminTabState extends State<DisponibilidadeAdminTab> {
   Future<void> _salvar(TipoRefeicao tipo) async {
     final controller =
         tipo == TipoRefeicao.almoco ? _almocoController : _jantaController;
-    final quantidade = int.tryParse(controller.text);
-    if (quantidade == null || quantidade < 0) return;
+    final quantidade = int.tryParse(controller.text.trim());
+    if (quantidade == null || quantidade < 0 || quantidade > 5000) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Informe uma quantidade inteira entre 0 e 5000.')));
+      return;
+    }
 
     setState(() {
       if (tipo == TipoRefeicao.almoco) {
@@ -48,6 +52,12 @@ class _DisponibilidadeAdminTabState extends State<DisponibilidadeAdminTab> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Quantidade de marmitas atualizada.')),
         );
+      }
+    } catch (e) {
+      debugPrint('ERRO DISPONIBILIDADE: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Não foi possível salvar a quantidade.')));
       }
     } finally {
       if (mounted) {

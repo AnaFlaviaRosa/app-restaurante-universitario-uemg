@@ -1,6 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/reserva.dart';
 import '../models/disponibilidade.dart';
+import '../utils/codigo_reserva.dart';
+import '../utils/protocolo.dart';
 import 'config_service.dart';
 import 'preco_service.dart';
 
@@ -21,11 +23,21 @@ class ForaDoPrazoException implements Exception {
   ForaDoPrazoException(this.message);
 }
 
-/// IMPORTANTE: `usuarioId` em todo este arquivo é, na prática, o CPF
-/// do usuário (chave primária de `usuarios` — ver Usuario.id em
-/// usuario.dart). O nome do parâmetro foi mantido como `usuarioId`
-/// para não quebrar as telas que já chamam este serviço passando
-/// `widget.usuario.id`.
+class RuFechadoException implements Exception {
+  final String message;
+  RuFechadoException(
+      [this.message = 'O RU está fechado hoje. Não é possível reservar.']);
+}
+
+class ProtocoloIndisponivelException implements Exception {
+  final String message;
+  ProtocoloIndisponivelException(
+      [this.message = 'Esta reserva ainda não pode ser retirada.']);
+}
+
+/// IMPORTANTE: `usuarioId` em todo este arquivo é o `uid` do Firebase
+/// Auth (chave de `usuarios/{uid}` — ver Usuario.id em usuario.dart).
+/// O CPF NÃO é usado como chave em nenhum lugar (decisão LGPD).
 class ReservaService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
   final ConfigService _configService = ConfigService();
@@ -54,6 +66,12 @@ class ReservaService {
       });
       return lista;
     });
+  }
+
+  /// Acompanha UMA reserva (usada pela tela do protocolo).
+  Stream<Reserva?> reservaStream(String reservaId) {
+    return _db.collection('reservas').doc(reservaId).snapshots().map(
+        (doc) => doc.exists ? Reserva.fromMap(doc.id, doc.data()!) : null);
   }
 
   Stream<Disponibilidade?> disponibilidadeStream(
@@ -87,23 +105,35 @@ class ReservaService {
   /// Regras aplicadas (definidas pelo grupo):
   /// 1. Usuário só pode ter 1 reserva confirmada por tipo de refeição/dia.
   ///    Isso é garantido por um documento "marcador" com ID
-  ///    determinístico (`reservas_ativas/{cpf}_{data}_{tipo}`), lido
+  ///    determinístico (`reservas_ativas/{uid}_{data}_{tipo}`), lido
   ///    e criado DENTRO da mesma transação — o Firestore não permite
   ///    rodar uma query (`where`) dentro de uma transação, então essa
   ///    é a forma de conseguir uma checagem atômica de "já existe?".
   /// 2. Precisa ter saldo suficiente. O valor cobrado depende do TIPO do
   ///    usuário (estudante = R$ 4, comum = R$ 17), lido de dentro da
-  ///    própria transação a partir de usuarios/{cpf}.tipo — garante que
+  ///    própria transação a partir de usuarios/{uid}.tipo — garante que
   ///    ninguém pague o preço errado mesmo que o app tenha um dado
   ///    desatualizado em tela.
   /// 3. Precisa haver marmita disponível.
   /// 4. Só pode reservar até o horário de abertura da refeição.
+  /// 5. Não pode reservar se o RU foi marcado como fechado no dia
+  ///    (botão "RU fechado hoje" do admin).
+  ///
+  /// A reserva guarda o nome do usuário e um código curto (protocolo),
+  /// para a conferência na hora da retirada.
   Future<void> criarReserva({
-    required String usuarioId, // = CPF
+    required String usuarioId, // = uid
     required DateTime data,
     required TipoRefeicao tipoRefeicao,
     bool vegetariana = false,
   }) async {
+    final statusRu = await _configService.buscarStatusRu();
+    if (statusRu.fechadoEmDia(data)) {
+      throw RuFechadoException(statusRu.motivo.isEmpty
+          ? 'O RU está fechado hoje. Não é possível reservar.'
+          : 'O RU está fechado hoje: ${statusRu.motivo}');
+    }
+
     final horarios = await _configService.buscarHorarios();
     final horario = horarios[tipoRefeicaoToString(tipoRefeicao)]!;
     final aberturaRefeicao = DateTime(
@@ -171,6 +201,8 @@ class ReservaService {
         status: StatusReserva.confirmada,
         criadaEm: DateTime.now(),
         vegetariana: vegetariana,
+        nome: (usuarioSnap.data()?['nome'] ?? '') as String,
+        codigo: gerarCodigoReserva(),
       ).toMap());
 
       // 4. Cria o marcador de "reserva ativa" (garante a unicidade)
@@ -221,8 +253,17 @@ class ReservaService {
 
     await _db.runTransaction((transacao) async {
       // --- LEITURAS (todas antes de qualquer escrita) ---
+      final reservaSnap = await transacao.get(reservaRef);
       final dispSnap = await transacao.get(dispRef);
       final usuarioSnap = await transacao.get(usuarioRef);
+
+      // Relê o status DENTRO da transação: se a reserva já foi cancelada
+      // (toque duplo, 2 aparelhos) ou liberada na catraca, não estorna
+      // de novo nem cancela.
+      if (reservaSnap.data()?['status'] != 'confirmada') {
+        throw ForaDoPrazoException(
+            'Esta reserva não pode mais ser cancelada.');
+      }
 
       final disponivel = dispSnap.data()?['quantidadeDisponivel'] ?? 0;
       final saldoAtual = (usuarioSnap.data()?['saldoAtual'] ?? 0).toDouble();
@@ -243,6 +284,39 @@ class ReservaService {
         'data': DateTime.now(),
         'reservaId': reserva.id,
       });
+    });
+  }
+
+  /// Abre o protocolo da reserva (uso único).
+  ///
+  /// Grava `status = utilizada` e `protocoloAbertoEm` com a hora do
+  /// SERVIDOR (as regras do Firestore exigem `request.time`, então não
+  /// dá para "inventar" o horário mudando o relógio do celular). Depois
+  /// disso o protocolo só fica visível por [duracaoProtocoloSegundos].
+  ///
+  /// Só funciona se [podeAbrirProtocolo] permitir; o servidor repete a
+  /// checagem principal nas regras (status e integração da catraca).
+  Future<void> abrirProtocolo(Reserva reserva) async {
+    final horarios = await _configService.buscarHorarios();
+    final horario = horarios[tipoRefeicaoToString(reserva.tipoRefeicao)]!;
+    final integracaoAtiva = await _configService.integracaoCatracaAtiva();
+
+    if (!podeAbrirProtocolo(
+      reserva: reserva,
+      integracaoCatracaAtiva: integracaoAtiva,
+      horario: horario,
+      agora: DateTime.now(),
+    )) {
+      throw ProtocoloIndisponivelException(
+          reserva.status == StatusReserva.confirmada && integracaoAtiva
+              ? 'Passe na catraca primeiro: o protocolo só abre depois que '
+                  'a catraca reconhecer você.'
+              : 'Esta reserva não pode ser retirada agora.');
+    }
+
+    await _db.collection('reservas').doc(reserva.id).update({
+      'status': 'utilizada',
+      'protocoloAbertoEm': FieldValue.serverTimestamp(),
     });
   }
 }

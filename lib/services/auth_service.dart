@@ -69,7 +69,7 @@ class AuthService {
     }
 
     try {
-      await _matriculaService.validarEMarcarComoUsada(matricula);
+      await _matriculaService.validarEMarcarComoUsada(matricula, uid);
     } catch (e) {
       await credencial.user!.delete();
       rethrow;

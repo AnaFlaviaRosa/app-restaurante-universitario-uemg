@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../services/config_service.dart';
 import '../../services/matricula_service.dart';
 import '../../services/preco_service.dart';
 
@@ -8,6 +9,8 @@ import '../../services/preco_service.dart';
 ///   aqui — ver MatriculaService).
 /// - Editar os valores da refeição por tipo de usuário (padrão:
 ///   estudante R$ 4,00 / comum R$ 17,00 — ver PrecoService).
+/// - Editar os horários das refeições (abertura e fechamento).
+/// - Ligar/desligar a integração da catraca (ver ConfigService).
 class ConfiguracoesAdminTab extends StatefulWidget {
   const ConfiguracoesAdminTab({super.key});
 
@@ -18,6 +21,14 @@ class ConfiguracoesAdminTab extends StatefulWidget {
 class _ConfiguracoesAdminTabState extends State<ConfiguracoesAdminTab> {
   final _matriculaService = MatriculaService();
   final _precoService = PrecoService();
+  final _configService = ConfigService();
+
+  final _almocoInicioController = TextEditingController();
+  final _almocoFimController = TextEditingController();
+  final _jantaInicioController = TextEditingController();
+  final _jantaFimController = TextEditingController();
+  bool _horariosCarregados = false;
+  bool _salvandoHorarios = false;
 
   final _matriculaController = TextEditingController();
   final _precoEstudanteController = TextEditingController();
@@ -33,11 +44,10 @@ class _ConfiguracoesAdminTabState extends State<ConfiguracoesAdminTab> {
     try {
       await _matriculaService.liberarMatricula(matricula);
       _matriculaController.clear();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Matrícula liberada para cadastro.')),
-        );
-      }
+      _mensagem('Matrícula liberada para cadastro.');
+    } catch (e) {
+      debugPrint('ERRO LIBERAR MATRÍCULA: $e');
+      _mensagem('Não foi possível liberar a matrícula.');
     } finally {
       if (mounted) setState(() => _liberando = false);
     }
@@ -48,7 +58,16 @@ class _ConfiguracoesAdminTabState extends State<ConfiguracoesAdminTab> {
         double.tryParse(_precoEstudanteController.text.replaceAll(',', '.'));
     final precoComum =
         double.tryParse(_precoComumController.text.replaceAll(',', '.'));
-    if (precoEstudante == null || precoComum == null) return;
+    final invalido = precoEstudante == null ||
+        precoComum == null ||
+        precoEstudante <= 0 ||
+        precoComum <= 0 ||
+        precoEstudante > 1000 ||
+        precoComum > 1000;
+    if (invalido) {
+      _mensagem('Informe preços maiores que zero (e até R\$ 1000).');
+      return;
+    }
 
     setState(() => _salvandoPrecos = true);
     try {
@@ -56,14 +75,159 @@ class _ConfiguracoesAdminTabState extends State<ConfiguracoesAdminTab> {
         precoEstudante: precoEstudante,
         precoComum: precoComum,
       );
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Preços atualizados.')),
-        );
-      }
+      _mensagem('Preços atualizados.');
+    } catch (e) {
+      debugPrint('ERRO SALVAR PREÇOS: $e');
+      _mensagem('Não foi possível salvar os preços.');
     } finally {
       if (mounted) setState(() => _salvandoPrecos = false);
     }
+  }
+
+  void _mensagem(String texto) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(texto)));
+  }
+
+  Future<void> _salvarHorarios() async {
+    final ai = int.tryParse(_almocoInicioController.text.trim());
+    final af = int.tryParse(_almocoFimController.text.trim());
+    final ji = int.tryParse(_jantaInicioController.text.trim());
+    final jf = int.tryParse(_jantaFimController.text.trim());
+    if (ai == null || af == null || ji == null || jf == null) {
+      _mensagem('Informe as quatro horas (números de 0 a 23).');
+      return;
+    }
+    final erro = ConfigService.validarHorarios(
+      almocoInicio: ai,
+      almocoFim: af,
+      jantaInicio: ji,
+      jantaFim: jf,
+    );
+    if (erro != null) {
+      _mensagem(erro);
+      return;
+    }
+    setState(() => _salvandoHorarios = true);
+    try {
+      await _configService.salvarHorarios(
+        almocoInicio: ai,
+        almocoFim: af,
+        jantaInicio: ji,
+        jantaFim: jf,
+      );
+      _mensagem('Horários atualizados.');
+    } catch (e) {
+      debugPrint('ERRO SALVAR HORÁRIOS: $e');
+      _mensagem('Não foi possível salvar os horários.');
+    } finally {
+      if (mounted) setState(() => _salvandoHorarios = false);
+    }
+  }
+
+  Widget _campoHora(TextEditingController c, String rotulo) {
+    return Expanded(
+      child: TextField(
+        controller: c,
+        keyboardType: TextInputType.number,
+        decoration: InputDecoration(
+          labelText: rotulo,
+          suffixText: 'h',
+          border: const OutlineInputBorder(),
+        ),
+      ),
+    );
+  }
+
+  Widget _cartaoHorarios() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Horários das refeições',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 4),
+            const Text(
+              'Reservas fecham na abertura; o cancelamento fecha 1 h antes '
+              'da abertura; o fechamento define até quando a retirada vale.',
+              style: TextStyle(color: Colors.black54, fontSize: 12),
+            ),
+            const SizedBox(height: 12),
+            StreamBuilder<Map<String, HorarioRefeicao>>(
+              stream: _configService.horariosStream(),
+              builder: (context, snapshot) {
+                final h = snapshot.data;
+                if (h != null && !_horariosCarregados) {
+                  _horariosCarregados = true;
+                  _almocoInicioController.text = '${h['almoco']!.inicioHora}';
+                  _almocoFimController.text = '${h['almoco']!.fimHora}';
+                  _jantaInicioController.text = '${h['janta']!.inicioHora}';
+                  _jantaFimController.text = '${h['janta']!.fimHora}';
+                }
+                return Column(
+                  children: [
+                    Row(children: [
+                      _campoHora(_almocoInicioController, 'Almoço abre'),
+                      const SizedBox(width: 12),
+                      _campoHora(_almocoFimController, 'Almoço fecha'),
+                    ]),
+                    const SizedBox(height: 12),
+                    Row(children: [
+                      _campoHora(_jantaInicioController, 'Janta abre'),
+                      const SizedBox(width: 12),
+                      _campoHora(_jantaFimController, 'Janta fecha'),
+                    ]),
+                  ],
+                );
+              },
+            ),
+            const SizedBox(height: 12),
+            ElevatedButton(
+              onPressed: _salvandoHorarios ? null : _salvarHorarios,
+              child:
+                  Text(_salvandoHorarios ? 'Salvando...' : 'Salvar horários'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _cartaoIntegracaoCatraca() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child: StreamBuilder<bool>(
+          stream: _configService.integracaoCatracaStream(),
+          builder: (context, snapshot) {
+            final ativa = snapshot.data ?? false;
+            return SwitchListTile(
+              title: const Text('Integração da catraca ativa',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+              subtitle: Text(
+                ativa
+                    ? 'LIGADA: o protocolo só abre depois que a catraca '
+                        'liberar a reserva. Se a ponte da catraca cair, '
+                        'DESLIGUE para os alunos poderem retirar pela reserva.'
+                    : 'DESLIGADA: o protocolo abre direto da reserva '
+                        'confirmada, dentro do horário da refeição. Ligue '
+                        'só quando a ponte da catraca estiver funcionando.',
+                style: const TextStyle(fontSize: 12),
+              ),
+              value: ativa,
+              onChanged: (v) => _configService
+                  .definirIntegracaoCatraca(v)
+                  .catchError((Object e) {
+                debugPrint('ERRO INTEGRAÇÃO: $e');
+                _mensagem('Não foi possível alterar.');
+              }),
+            );
+          },
+        ),
+      ),
+    );
   }
 
   @override
@@ -182,6 +346,10 @@ class _ConfiguracoesAdminTabState extends State<ConfiguracoesAdminTab> {
             ),
           ),
         ),
+        const SizedBox(height: 16),
+        _cartaoHorarios(),
+        const SizedBox(height: 16),
+        _cartaoIntegracaoCatraca(),
       ],
     );
   }

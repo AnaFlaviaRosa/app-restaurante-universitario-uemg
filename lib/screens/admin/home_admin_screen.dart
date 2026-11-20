@@ -4,6 +4,7 @@ import '../../services/auth_service.dart';
 import 'lotacao_admin_tab.dart';
 import 'disponibilidade_admin_tab.dart';
 import 'reservas_admin_tab.dart';
+import 'avisos_admin_tab.dart';
 import 'configuracoes_admin_tab.dart';
 
 /// Fluxo D definido pelo grupo: administração do RU.
@@ -27,6 +28,7 @@ class _HomeAdminScreenState extends State<HomeAdminScreen> {
       const LotacaoAdminTab(),
       const DisponibilidadeAdminTab(),
       const ReservasAdminTab(),
+      const AvisosAdminTab(),
       const ConfiguracoesAdminTab(),
     ];
 
@@ -51,6 +53,8 @@ class _HomeAdminScreenState extends State<HomeAdminScreen> {
               icon: Icon(Icons.set_meal), label: 'Marmitas'),
           NavigationDestination(
               icon: Icon(Icons.list_alt), label: 'Reservas'),
+          NavigationDestination(
+              icon: Icon(Icons.campaign), label: 'Avisos'),
           NavigationDestination(
               icon: Icon(Icons.settings), label: 'Config.'),
         ],

@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import '../../models/usuario.dart';
 import '../../models/cardapio.dart';
+import '../../models/aviso.dart';
 import '../../models/lotacao.dart';
+import '../../services/aviso_service.dart';
 import '../../services/cardapio_service.dart';
 import '../../services/lotacao_service.dart';
 import '../../theme/cores.dart';
 import '../../widgets/lotacao_janela.dart';
+import '../../widgets/quadro_avisos.dart';
 
 /// Fluxo A definido pelo grupo: "descobrir se vale a pena ir ao RU agora".
 ///
@@ -32,14 +35,30 @@ class InicioTab extends StatefulWidget {
 class _InicioTabState extends State<InicioTab> {
   final _lotacaoService = LotacaoService();
   final _cardapioService = CardapioService();
+  final _avisoService = AvisoService();
   late Stream<Lotacao?> _lotacaoStream;
   late Stream<Cardapio?> _cardapioStream;
+
+  // Avisos: lidos UMA vez ao abrir a tela (e ao puxar para atualizar),
+  // sem atualização automática por tempo — poupa leituras do Firestore.
+  late Future<List<Aviso>> _avisosFuture;
 
   @override
   void initState() {
     super.initState();
     _lotacaoStream = _lotacaoService.lotacaoStream();
     _cardapioStream = _cardapioService.cardapioStream();
+    _avisosFuture = _avisoService.avisosAtivos();
+  }
+
+  Future<void> _atualizarAvisos() async {
+    final novo = _avisoService.avisosAtivos();
+    setState(() => _avisosFuture = novo);
+    try {
+      await novo;
+    } catch (_) {
+      // O erro aparece no próprio bloco de avisos (que ignora a falha).
+    }
   }
 
   // ---------- formatação ----------
@@ -124,16 +143,42 @@ class _InicioTabState extends State<InicioTab> {
           topLeft: Radius.circular(42),
           topRight: Radius.circular(42),
         ),
-        child: ListView(
-          physics: const BouncingScrollPhysics(),
-          padding: const EdgeInsets.fromLTRB(24, 30, 24, 28),
-          children: [
-            _blocoLotacao(),
-            const SizedBox(height: 22),
-            _blocoCardapio(),
-          ],
+        child: RefreshIndicator(
+          onRefresh: _atualizarAvisos,
+          child: ListView(
+            physics: const AlwaysScrollableScrollPhysics(
+                parent: BouncingScrollPhysics()),
+            padding: const EdgeInsets.fromLTRB(24, 30, 24, 28),
+            children: [
+              _blocoAvisos(),
+              _blocoLotacao(),
+              const SizedBox(height: 22),
+              _blocoCardapio(),
+            ],
+          ),
         ),
       ),
+    );
+  }
+
+  // ---------- avisos ----------
+
+  Widget _blocoAvisos() {
+    return FutureBuilder<List<Aviso>>(
+      future: _avisosFuture,
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          // Falha nos avisos não deve atrapalhar o resto da tela.
+          debugPrint('ERRO AVISOS: ${snapshot.error}');
+          return const SizedBox.shrink();
+        }
+        final avisos = snapshot.data;
+        if (avisos == null || avisos.isEmpty) return const SizedBox.shrink();
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 14),
+          child: QuadroAvisos(avisos: avisos),
+        );
+      },
     );
   }
 

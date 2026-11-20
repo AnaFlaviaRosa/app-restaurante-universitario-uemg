@@ -10,7 +10,12 @@ class MatriculaJaUsadaException implements Exception {
 }
 
 /// Coleção Firestore: matriculas_validas/{matricula}
-/// Documento = { usada: bool, usadaEm: DateTime? }
+/// Documento = { usada: bool, usadaEm: DateTime?, usadaPor: uid? }
+///
+/// `usadaPor` guarda o uid de quem usou a matrícula. As regras do
+/// Firestore usam isso para (1) só aceitar o documento de um estudante
+/// cuja matrícula foi marcada por ele mesmo e (2) deixar só essa mesma
+/// pessoa desfazer a marcação se o cadastro falhar no meio.
 ///
 /// Decisão de arquitetura (MVP): como não há integração com o sistema
 /// acadêmico da UEMG, o administrador pré-carrega as matrículas
@@ -30,8 +35,8 @@ class MatriculaService {
 
   /// Chamado durante o cadastro do estudante. Roda em transação para
   /// que duas pessoas não consigam usar a mesma matrícula ao mesmo
-  /// tempo.
-  Future<void> validarEMarcarComoUsada(String matricula) async {
+  /// tempo. [uid] é o uid do Firebase Auth de quem está se cadastrando.
+  Future<void> validarEMarcarComoUsada(String matricula, String uid) async {
     final ref = _db.collection('matriculas_validas').doc(matricula);
     await _db.runTransaction((transacao) async {
       final snap = await transacao.get(ref);
@@ -45,6 +50,7 @@ class MatriculaService {
       transacao.update(ref, {
         'usada': true,
         'usadaEm': DateTime.now(),
+        'usadaPor': uid,
       });
     });
   }
@@ -52,11 +58,15 @@ class MatriculaService {
   /// Desfaz a marcação de "usada" — usado quando o cadastro falha
   /// depois de validar a matrícula (ex: CPF já existe) e é preciso
   /// devolver a matrícula para a lista de disponíveis.
+  ///
+  /// Usa `update` (e não `set`) com os campos removidos: é a forma que
+  /// as regras do Firestore aceitam para quem marcou a matrícula.
   Future<void> liberarNovamente(String matricula) {
-    return _db.collection('matriculas_validas').doc(matricula).set({
+    return _db.collection('matriculas_validas').doc(matricula).update({
       'usada': false,
-      'usadaEm': null,
-    }, SetOptions(merge: true));
+      'usadaEm': FieldValue.delete(),
+      'usadaPor': FieldValue.delete(),
+    });
   }
 
   Stream<List<String>> matriculasLiberadasStream() {
